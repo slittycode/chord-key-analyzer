@@ -400,6 +400,7 @@ def render_report(
     from rich.console import Console
     from rich.panel import Panel
     from rich.table import Table
+    from rich.text import Text
 
     from .output import format_time
 
@@ -441,7 +442,7 @@ def render_report(
 
     for track in tracks:
         if not track.ok:
-            console.print(f"[red]{track.name}:[/red] {track.error}")
+            console.print(Text.assemble((f"{track.name}: ", "red"), track.error or ""))
 
 
 def report_payload(tracks: list[TrackEvaluation], summary: dict[str, Any]) -> dict[str, Any]:

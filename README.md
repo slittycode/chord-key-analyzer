@@ -141,26 +141,34 @@ DRM-free m4a), analyse that file directly — it works like any other local file
 ## How it works
 
 ```
-audio ──▶ decode 22.05 kHz mono ──▶ tuning estimate ──▶ HPSS ──▶ CQT chroma
-                                                                     │
-                        ┌────────────────────────────────────────────┤
-                        ▼                                            ▼
-              chord templates + Viterbi                       beat tracking
-                        │                                            │
-                        ├──────────────▶ chord timeline ◀────────────┘
-                        │                                (optional boundary snap)
+audio ──▶ decode 22.05 kHz mono ──▶ tuning estimate ──▶ HPSS ──┬──▶ CQT chroma
+                                                              │        │
+                                                              └──▶ bass chroma
+                                                                       │
+                        ┌──────────────────────────────────────────────┤
+                        ▼                                              ▼
+              chord templates + Viterbi                        beat tracking
+                        │                                              │
+                        ├───────────────▶ chord timeline ◀─────────────┘
+                        │                        │       (optional boundary snap)
+                        │                        ▼
+                        │            bass ──▶ inversions, re-spellings
                         ▼
        key: profile correlation + chord evidence ──▶ Roman numerals, loop detection
+                        │
+                        └──▶ self-similarity novelty ──▶ sections
 ```
 
 1. **Decode** to mono 22.05 kHz — via libsndfile where possible, otherwise an ffmpeg pipe
    to raw PCM (which sidesteps `audioread`'s backend roulette).
 2. **Tuning estimate** so slightly detuned recordings don't smear the chroma bins.
 3. **Harmonic/percussive separation**, then **CQT chroma** at 36 bins/octave. Percussion
-   otherwise splashes energy across every pitch class at once.
+   otherwise splashes energy across every pitch class at once. One separation feeds two
+   chromas: the full-range one, and a second over the bass register alone.
 4. **Chords**: each frame is scored against harmonically-weighted templates for 12 roots ×
    7 qualities (plus a no-chord state), then **Viterbi-decoded** with a sticky
-   self-transition so the output doesn't flicker frame to frame.
+   self-transition so the output doesn't flicker frame to frame. The bass chroma then
+   supplies inversions and re-spellings (see [Inversions](#inversions)).
 5. **Key**: Krumhansl-Schmuckler and Temperley profiles are correlated against the pooled
    chroma **and combined with evidence from the detected chords**. That second term is
    what resolves relative major/minor — A minor and C major contain identical pitch
@@ -372,7 +380,7 @@ do not recognise.
                 "progression": {"roman": ["I", "V", "vi", "IV"],
                                 "labels": ["C:maj", "G:maj", "A:min", "F:maj"],
                                 "main_loop": null}}],
-  "meta": {"engine": "template", "version": "0.1.0", "sample_rate": 22050,
+  "meta": {"engine": "template", "version": "0.2.0", "sample_rate": 22050,
            "hop_length": 2048, "tuning": 0.0, "beats_reliable": true,
            "harmonic_rhythm": 2.0, "triads_only": false}
 }

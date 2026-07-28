@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 __all__ = [
     "__version__",
@@ -12,6 +12,7 @@ __all__ = [
     "ChordSegment",
     "KeyEstimate",
     "ProgressionSummary",
+    "Section",
 ]
 
 
@@ -25,7 +26,13 @@ def __getattr__(name: str):
         from . import pipeline
 
         return getattr(pipeline, name)
-    if name in {"AnalysisResult", "ChordSegment", "KeyEstimate", "ProgressionSummary"}:
+    if name in {
+        "AnalysisResult",
+        "ChordSegment",
+        "KeyEstimate",
+        "ProgressionSummary",
+        "Section",
+    }:
         from . import models
 
         return getattr(models, name)

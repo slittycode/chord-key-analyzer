@@ -6,8 +6,15 @@ import sys
 
 import click
 from rich.console import Console
+from rich.text import Text
 
 from . import __version__
+
+# Runtime strings — exception messages, file paths — are printed as Text rather
+# than interpolated into a markup string.  Rich reads `[...]` in markup as a style
+# tag, so the install hint for the [url] extra printed as
+# "pip install 'chord-key-analyzer'": the one part the user needed, silently
+# eaten.  Text.assemble() styles the prefix and takes the body as literal data.
 
 CONTEXT_SETTINGS = {"help_option_names": ["-h", "--help"]}
 
@@ -112,7 +119,7 @@ def analyze(
                     progress=progress,
                 )
     except IngestError as exc:
-        status_console.print(f"[red]Error:[/red] {exc}")
+        status_console.print(Text.assemble(("Error: ", "red"), str(exc)))
         raise SystemExit(2) from exc
 
     # No `except ValueError` here: the only ValueError the pipeline raises is
@@ -126,7 +133,9 @@ def analyze(
         if lab_path:
             write_lab(result, lab_path)
     except OSError as exc:
-        status_console.print(f"[red]Error:[/red] cannot write output: {exc}")
+        status_console.print(
+            Text.assemble(("Error: ", "red"), f"cannot write output: {exc}")
+        )
         raise SystemExit(2) from exc
 
     if not quiet:
@@ -186,7 +195,9 @@ def eval_cmd(
 
     pairs, orphans = discover_pairs(dataset)
     for orphan in orphans:
-        status_console.print(f"[yellow]Skipping[/yellow] {orphan}: no audio file beside it.")
+        status_console.print(
+            Text.assemble(("Skipping ", "yellow"), f"{orphan}: no audio file beside it.")
+        )
 
     if not pairs:
         status_console.print(
@@ -201,7 +212,7 @@ def eval_cmd(
     tracks = []
     for index, pair in enumerate(pairs, start=1):
         if not quiet:
-            status_console.print(f"[dim]({index}/{len(pairs)}) {pair.name}[/dim]")
+            status_console.print(Text(f"({index}/{len(pairs)}) {pair.name}", style="dim"))
         tracks.append(evaluate_track(pair, engine=engine, triads_only=triads_only))
 
     summary = summarise(tracks)
@@ -212,7 +223,9 @@ def eval_cmd(
         if csv_path:
             write_report_csv(tracks, summary, csv_path)
     except OSError as exc:
-        status_console.print(f"[red]Error:[/red] cannot write output: {exc}")
+        status_console.print(
+            Text.assemble(("Error: ", "red"), f"cannot write output: {exc}")
+        )
         raise SystemExit(2) from exc
 
     if not quiet:

@@ -78,6 +78,33 @@ def test_eval_without_mir_eval_prints_the_install_hint_first(runner, monkeypatch
     assert "Traceback" not in result.output
 
 
+def test_the_url_install_hint_survives_rich_markup(runner, monkeypatch, tmp_path):
+    """Regression: rich reads `[...]` in a markup string as a style tag.
+
+    The hint went through `console.print(f"[red]Error:[/red] {exc}")`, so
+    "pip install 'chord-key-analyzer[url]'" reached the user as
+    "pip install 'chord-key-analyzer'" — with the one part they needed silently
+    eaten.  Runtime strings are printed as Text now, not interpolated markup.
+    """
+    monkeypatch.setitem(sys.modules, "yt_dlp", None)
+
+    result = runner.invoke(main, ["analyze", "https://example.invalid/song", "--quiet"])
+    assert result.exit_code == 2
+    assert "chord-key-analyzer[url]" in result.output
+
+
+def test_a_bracketed_path_is_not_eaten_by_markup(runner, tmp_path):
+    """Same failure mode, reached through a filename instead of a hint."""
+    awkward = tmp_path / "album [remastered]"
+    awkward.mkdir()
+
+    result = runner.invoke(main, ["analyze", str(awkward / "nope.wav")])
+    assert result.exit_code == 2
+    # Soft-wrapped rather than mangled: rich breaks a long path across lines
+    # without inserting anything, so dropping the newlines restores it.
+    assert "album [remastered]" in result.output.replace("\n", "")
+
+
 def test_analyze_renders_a_report(runner, pop_wav):
     result = runner.invoke(main, ["analyze", str(pop_wav)])
     assert result.exit_code == 0, result.output
