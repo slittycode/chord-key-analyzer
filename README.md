@@ -55,7 +55,8 @@ Requires **Python ≥ 3.11**.
 pip install chord-key-analyzer                 # core: local audio files
 pip install 'chord-key-analyzer[url]'          # + YouTube / SoundCloud / Bandcamp
 pip install 'chord-key-analyzer[web]'          # + the local web UI
-pip install 'chord-key-analyzer[url,web]'      # everything
+pip install 'chord-key-analyzer[eval]'         # + `cka eval` accuracy scoring
+pip install 'chord-key-analyzer[url,web,eval]' # everything
 ```
 
 **ffmpeg** must be on your PATH to decode compressed formats (mp3, m4a, …) and for URL
@@ -84,10 +85,14 @@ cka analyze 'https://www.youtube.com/watch?v=...'   # needs the [url] extra
 Useful flags: `--no-hpss` (skip harmonic/percussive separation — faster, less accurate on
 drum-heavy material), `--no-beat-snap`, `--no-modulations`, `--quiet`.
 
+`cka eval` scores the analyzer against reference annotations — see
+[Measuring accuracy](#measuring-accuracy).
+
 ### Web UI
 
 ```bash
 cka web            # opens http://127.0.0.1:8321
+cka web --no-urls  # uploads only, no URL ingestion
 ```
 
 Drag in a file or paste a URL and you get the key card, an SVG chord timeline, the
@@ -95,6 +100,16 @@ progression, and download links for the JSON and `.lab`. It is one static page w
 inline vanilla JS — no React, no node, no build step — and it binds to localhost only.
 The endpoint calls the exact same `analyze_audio()` the CLI does, so the two can never
 disagree.
+
+**URL ingestion and non-loopback binds.** The server has no authentication, so URL input
+— the one feature that makes it fetch on someone else's behalf — is enabled only when you
+bind to loopback. `cka web --host 0.0.0.0` turns it off automatically, and `--no-urls`
+turns it off on loopback too. URLs that resolve to private, loopback, link-local (cloud
+metadata) or otherwise non-public addresses are refused before any download starts; that
+check is best-effort, since yt-dlp resolves the name again when it fetches. There is
+deliberately no flag to force URLs back on for a non-loopback bind — if you really want
+that, run uvicorn against `create_app(allow_urls=True)` yourself and take ownership of
+the exposure.
 
 ### Python
 
@@ -185,6 +200,61 @@ analyzer telling you it is unsure. Chord confidences are posterior probabilities
 the whole 77-state vocabulary, so they are naturally lower than a yes/no score: many
 chords genuinely share most of their pitch classes.
 
+## Measuring accuracy
+
+Those expectations are claims, so there is a way to check them. `cka eval` scores the
+analyzer against reference annotations using [mir_eval], the reference implementation of
+the MIREX metrics — the numbers are comparable with published results rather than a
+private invention of this project.
+
+```bash
+pip install 'chord-key-analyzer[eval]'
+cka eval dataset/                          # table of per-track and corpus scores
+cka eval dataset/ --json eval.json         # machine-readable
+cka eval dataset/ --csv eval.csv --quiet   # spreadsheet-friendly
+```
+
+A dataset is a directory of audio, each file beside a same-stem `.lab` of reference
+chords and optionally a `.key`. Subdirectories are searched, so an album layout works:
+
+```
+dataset/
+  album/disc1/track.wav
+  album/disc1/track.lab      # MIREX chord format: start<TAB>end<TAB>label
+  album/disc1/track.key      # optional: "C major", "A:min", or an Isophonics key file
+```
+
+**Getting annotations.** `cka eval` never downloads anything — not audio, not
+annotations. Assemble the directory yourself. The [Isophonics] reference annotations
+(Beatles, Queen, Zweieck) are the usual starting point and are distributed as `.lab`
+files that drop straight in; you supply your own copies of the recordings. Chord files
+are read as-is, and key files parse both a one-line key and Isophonics' segmented
+keylab format, where the longest tonality wins.
+
+Five chord metrics are reported, and they measure genuinely different things — a spread
+between them is information, not noise:
+
+| Metric     | Counts a chord correct when…                                  |
+| ---------- | ------------------------------------------------------------- |
+| `root`     | the root matches, whatever the quality                         |
+| `majmin`   | root and major/minor match, sevenths collapsed away            |
+| `sevenths` | root and the full quality match, sevenths included — strictest |
+| `mirex`    | it shares at least three pitch classes with the reference      |
+| `seg`      | the *boundaries* line up, ignoring labels entirely             |
+
+`mirex` reads highest by design: three shared pitch classes means C:maj scores against
+A:min, so a system that confuses relatives still looks good on it. Read it alongside
+`sevenths`, not instead of it. Corpus chord scores are duration-weighted — the standard
+weighted chord symbol recall — so a 20 s clip cannot outvote a 6 minute song. The key
+score is mir_eval's weighted score, which gives partial credit for musically near misses
+(a fifth away, or the relative) rather than scoring them zero.
+
+A track that fails to decode records its error and the run continues, so one unreadable
+file does not cost you the rest of the corpus.
+
+[mir_eval]: https://github.com/mir-evaluation/mir_eval
+[Isophonics]: http://isophonics.net/datasets
+
 ## Engines
 
 The `--engine` flag selects the chord backend. v1 ships `template` (the default).
@@ -229,7 +299,7 @@ telemetry, no model download, and no API key anywhere in this project.
 ## Development
 
 ```bash
-pip install -e '.[dev,web,url]'
+pip install -e '.[dev,web,url,eval]'
 pytest
 ruff check .
 ```
