@@ -6,7 +6,10 @@ on:
   pull_request:
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  # Keyed on the branch rather than the ref, so the push run and the
+  # pull_request run for the same branch share a group and the redundant one is
+  # cancelled instead of doubling every PR's CI.
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
   cancel-in-progress: true
 
 jobs:

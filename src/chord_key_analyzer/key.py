@@ -54,6 +54,12 @@ MODES = ("major", "minor")
 #: ambiguous material (whole-tone, chromatic planing) falls below 0.4.
 _CONFIDENCE_TEMPERATURE = 0.6
 
+#: How much the chord evidence counts relative to the profile correlation, once
+#: both have been standardised across the 24 candidate keys (see
+#: :func:`_standardise`).  Standardising first is what makes this a genuine
+#: relative weight rather than an artefact of the two scores' natural ranges.
+KEY_CHORD_WEIGHT = 2.0
+
 #: Sliding-window geometry for the modulation scan.
 MODULATION_WINDOW = 20.0
 MODULATION_HOP = 5.0
@@ -127,6 +133,7 @@ def estimate_key_from_chroma(
     chroma_vector: np.ndarray,
     n_alternatives: int = 3,
     chord_scores: np.ndarray | None = None,
+    chord_weight: float = KEY_CHORD_WEIGHT,
 ) -> tuple[KeyCandidate, float, list[KeyCandidate]]:
     """Best key, its confidence, and the runners-up for one pooled chroma vector.
 
@@ -138,7 +145,7 @@ def estimate_key_from_chroma(
     """
     scores = _standardise(score_chroma_vector(chroma_vector))
     if chord_scores is not None:
-        scores = scores + KEY_CHORD_WEIGHT * _standardise(chord_scores)
+        scores = scores + chord_weight * _standardise(chord_scores)
     order = np.argsort(scores)[::-1]
 
     best_index = int(order[0])
@@ -194,18 +201,29 @@ def _tonic_qualities(mode: str) -> tuple[str, ...]:
     return ("maj", "maj7") if mode == "major" else ("min", "min7")
 
 
-#: How much the chord evidence counts relative to the profile correlation, once
-#: both have been standardised across the 24 candidate keys (see
-#: :func:`_standardise`).  Standardising first is what makes this a genuine
-#: relative weight rather than an artefact of the two scores' natural ranges.
-KEY_CHORD_WEIGHT = 2.0
-
 #: Extra credit for time spent on the tonic triad itself, and for the
 #: progression starting or ending there.  Relative major/minor pairs share every
 #: diatonic chord, so *which* chord acts as home is the only thing that
 #: separates them — a pitch-class histogram alone genuinely cannot.
 TONIC_TIME_WEIGHT = 0.8
 TONIC_EDGE_WEIGHT = 0.35
+
+#: Number of *distinct* chords at which the chord evidence is trusted in full.
+#: One sustained chord barely constrains the key at all — a lone C major is
+#: equally the I of C, the IV of G and the V of F — yet the evidence term scores
+#: it as a perfect, unanimous fit and drives the confidence to 1.0.  Scaling the
+#: evidence weight by how many distinct chords support it keeps a thin excerpt
+#: from being reported as a certainty.  Real progressions clear this easily and
+#: are unaffected.
+CHORD_EVIDENCE_FULL_SUPPORT = 3
+
+
+def _evidence_support(chords: list[ChordSegment]) -> float:
+    """How far to trust the chord evidence, in [0, 1], by distinct chord count."""
+    distinct = {c.label for c in chords if not c.is_no_chord and parse_chord_label(c.label)}
+    if not distinct:
+        return 0.0
+    return min(1.0, len(distinct) / CHORD_EVIDENCE_FULL_SUPPORT)
 
 
 def chord_evidence_scores(
@@ -378,7 +396,11 @@ def detect_key(
     """
     pooled = _pooled_chroma(features)
     chord_scores = chord_evidence_scores(chords) if chords else None
-    best, confidence, alternatives = estimate_key_from_chroma(pooled, chord_scores=chord_scores)
+    best, confidence, alternatives = estimate_key_from_chroma(
+        pooled,
+        chord_scores=chord_scores,
+        chord_weight=KEY_CHORD_WEIGHT * (_evidence_support(chords) if chords else 0.0),
+    )
 
     modulations: list[Modulation] = []
     if scan_modulations:
