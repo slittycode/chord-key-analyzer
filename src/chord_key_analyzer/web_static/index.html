@@ -1,0 +1,397 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>chord-key-analyzer</title>
+<style>
+  :root {
+    --bg: #0f1117;
+    --panel: #171a23;
+    --panel-2: #1e222d;
+    --line: #2a2f3d;
+    --text: #e6e8ee;
+    --dim: #8b93a7;
+    --accent: #5eead4;
+    --accent-2: #c084fc;
+    --warn: #fbbf24;
+    --bad: #f87171;
+  }
+  @media (prefers-color-scheme: light) {
+    :root {
+      --bg: #f7f8fa; --panel: #ffffff; --panel-2: #f0f2f6; --line: #dfe3ea;
+      --text: #16181d; --dim: #5d6577; --accent: #0d9488; --accent-2: #7c3aed;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 2rem 1.25rem 4rem;
+    background: var(--bg); color: var(--text);
+    font: 15px/1.55 ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  .wrap { max-width: 980px; margin: 0 auto; }
+  h1 { font-size: 1.35rem; margin: 0 0 .25rem; letter-spacing: -.01em; }
+  .sub { color: var(--dim); margin: 0 0 1.75rem; font-size: .9rem; }
+  .panel {
+    background: var(--panel); border: 1px solid var(--line);
+    border-radius: 12px; padding: 1.25rem; margin-bottom: 1.25rem;
+  }
+  #drop {
+    border: 1.5px dashed var(--line); border-radius: 12px;
+    padding: 2.25rem 1rem; text-align: center; cursor: pointer;
+    transition: border-color .15s, background .15s;
+  }
+  #drop.hot { border-color: var(--accent); background: var(--panel-2); }
+  #drop p { margin: .35rem 0; color: var(--dim); }
+  #drop strong { color: var(--text); }
+  .row { display: flex; gap: .6rem; margin-top: 1rem; flex-wrap: wrap; }
+  input[type=text] {
+    flex: 1 1 20rem; min-width: 0; padding: .6rem .75rem;
+    background: var(--panel-2); color: var(--text);
+    border: 1px solid var(--line); border-radius: 8px; font: inherit;
+  }
+  button {
+    padding: .6rem 1.1rem; border-radius: 8px; border: 1px solid transparent;
+    background: var(--accent); color: #05231f; font: inherit; font-weight: 600;
+    cursor: pointer;
+  }
+  button:disabled { opacity: .5; cursor: default; }
+  button.ghost { background: transparent; border-color: var(--line); color: var(--text); font-weight: 500; }
+  label.check { display: inline-flex; align-items: center; gap: .4rem; color: var(--dim); font-size: .9rem; }
+  .status { margin-top: .9rem; color: var(--dim); font-size: .9rem; min-height: 1.2em; }
+  .status.error { color: var(--bad); }
+  .keyname { font-size: 2rem; font-weight: 700; letter-spacing: -.02em; }
+  .meta { display: flex; gap: 1.5rem; flex-wrap: wrap; color: var(--dim); font-size: .88rem; margin-top: .35rem; }
+  .meta b { color: var(--text); font-weight: 600; }
+  .bar { height: 6px; border-radius: 3px; background: var(--panel-2); overflow: hidden; margin-top: .75rem; }
+  .bar > i { display: block; height: 100%; background: var(--accent); }
+  h2 { font-size: .8rem; text-transform: uppercase; letter-spacing: .08em; color: var(--dim);
+       margin: 0 0 .8rem; font-weight: 600; }
+  .loop { font-size: 1.15rem; font-weight: 650; color: var(--accent-2); }
+  .loop-labels { color: var(--dim); font-size: .9rem; margin-top: .2rem; }
+  table { width: 100%; border-collapse: collapse; font-size: .9rem; }
+  th, td { text-align: left; padding: .35rem .5rem; border-bottom: 1px solid var(--line); }
+  th { color: var(--dim); font-weight: 600; font-size: .78rem; text-transform: uppercase; letter-spacing: .05em; }
+  td.num { text-align: right; color: var(--dim); font-variant-numeric: tabular-nums; }
+  .timeline-scroll { overflow-x: auto; }
+  .hidden { display: none; }
+  .chips { display: flex; gap: .4rem; flex-wrap: wrap; margin-top: .5rem; }
+  .chip { background: var(--panel-2); border: 1px solid var(--line); border-radius: 999px;
+          padding: .15rem .6rem; font-size: .82rem; color: var(--dim); }
+  footer { color: var(--dim); font-size: .82rem; text-align: center; margin-top: 2rem; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>chord-key-analyzer</h1>
+  <p class="sub">Offline key, chord and progression analysis. Nothing leaves this machine unless you paste a URL.</p>
+
+  <div class="panel">
+    <div id="drop">
+      <p><strong>Drop an audio file here</strong></p>
+      <p>or click to choose &middot; wav, flac, mp3, m4a, ogg…</p>
+      <input type="file" id="file" accept="audio/*,.wav,.mp3,.flac,.m4a,.ogg,.opus,.aiff" hidden />
+    </div>
+    <div class="row">
+      <input type="text" id="url" placeholder="…or paste a YouTube / SoundCloud / Bandcamp URL" />
+      <button id="go">Analyze</button>
+    </div>
+    <div class="row">
+      <label class="check"><input type="checkbox" id="triads" /> Triads only (no sevenths)</label>
+    </div>
+    <div class="status" id="status"></div>
+    <div class="bar hidden" id="bar"><i style="width:0%"></i></div>
+  </div>
+
+  <div id="results" class="hidden">
+    <div class="panel">
+      <h2>Key</h2>
+      <div class="keyname" id="keyname">—</div>
+      <div class="meta">
+        <span>confidence <b id="keyconf">—</b></span>
+        <span>tempo <b id="tempo">—</b></span>
+        <span>duration <b id="duration">—</b></span>
+      </div>
+      <div class="chips" id="alternatives"></div>
+      <div id="modulations" class="meta"></div>
+    </div>
+
+    <div class="panel">
+      <h2>Chord timeline</h2>
+      <div class="timeline-scroll"><svg id="timeline" height="112" role="img" aria-label="Chord timeline"></svg></div>
+    </div>
+
+    <div class="panel">
+      <h2>Progression</h2>
+      <div class="loop" id="loop">—</div>
+      <div class="loop-labels" id="looplabels"></div>
+      <div class="timeline-scroll" style="margin-top:1rem">
+        <table id="chordtable">
+          <thead><tr><th>Start</th><th>End</th><th>Chord</th><th>Roman</th><th class="num">Conf</th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+      <div class="row">
+        <button class="ghost" id="dl-json">Download JSON</button>
+        <button class="ghost" id="dl-lab">Download .lab</button>
+      </div>
+    </div>
+  </div>
+
+  <footer>cka &middot; template engine &middot; <span id="version"></span></footer>
+</div>
+
+<script>
+"use strict";
+
+const $ = (id) => document.getElementById(id);
+const dropZone = $("drop"), fileInput = $("file"), urlInput = $("url");
+const goButton = $("go"), statusLine = $("status"), progressBar = $("bar");
+let selectedFile = null;
+let lastResult = null;
+
+const PALETTE = [
+  "#5eead4", "#c084fc", "#fbbf24", "#60a5fa", "#f472b6", "#a3e635",
+  "#fb923c", "#38bdf8", "#e879f9", "#4ade80", "#facc15", "#f87171"
+];
+
+function setStatus(message, isError) {
+  statusLine.textContent = message || "";
+  statusLine.classList.toggle("error", Boolean(isError));
+}
+
+function setBusy(busy) {
+  goButton.disabled = busy;
+  progressBar.classList.toggle("hidden", !busy);
+  if (!busy) progressBar.firstElementChild.style.width = "0%";
+}
+
+function formatTime(seconds) {
+  const m = Math.floor(seconds / 60);
+  const s = (seconds % 60).toFixed(1).padStart(4, "0");
+  return `${m}:${s}`;
+}
+
+dropZone.addEventListener("click", () => fileInput.click());
+dropZone.addEventListener("dragover", (event) => {
+  event.preventDefault();
+  dropZone.classList.add("hot");
+});
+dropZone.addEventListener("dragleave", () => dropZone.classList.remove("hot"));
+dropZone.addEventListener("drop", (event) => {
+  event.preventDefault();
+  dropZone.classList.remove("hot");
+  if (event.dataTransfer.files.length) selectFile(event.dataTransfer.files[0]);
+});
+fileInput.addEventListener("change", () => {
+  if (fileInput.files.length) selectFile(fileInput.files[0]);
+});
+
+function selectFile(file) {
+  selectedFile = file;
+  urlInput.value = "";
+  dropZone.querySelector("strong").textContent = file.name;
+  setStatus("");
+}
+
+urlInput.addEventListener("input", () => {
+  if (urlInput.value) {
+    selectedFile = null;
+    fileInput.value = "";
+    dropZone.querySelector("strong").textContent = "Drop an audio file here";
+  }
+});
+
+goButton.addEventListener("click", start);
+urlInput.addEventListener("keydown", (event) => { if (event.key === "Enter") start(); });
+
+async function start() {
+  const url = urlInput.value.trim();
+  if (!selectedFile && !url) {
+    setStatus("Choose a file or paste a URL first.", true);
+    return;
+  }
+
+  const form = new FormData();
+  if (selectedFile) form.append("file", selectedFile);
+  else form.append("url", url);
+  form.append("triads_only", $("triads").checked ? "true" : "false");
+
+  setBusy(true);
+  setStatus("Uploading…");
+  $("results").classList.add("hidden");
+
+  let jobId;
+  try {
+    const response = await fetch("/analyze", { method: "POST", body: form });
+    const payload = await response.json();
+    if (!response.ok) throw new Error(payload.detail || "Request failed");
+    jobId = payload.job;
+  } catch (error) {
+    setBusy(false);
+    setStatus(error.message, true);
+    return;
+  }
+
+  poll(jobId);
+}
+
+async function poll(jobId) {
+  try {
+    const response = await fetch(`/jobs/${jobId}`);
+    const job = await response.json();
+    if (!response.ok) throw new Error(job.detail || "Lost track of the job");
+
+    if (job.status === "error") {
+      setBusy(false);
+      setStatus(job.error, true);
+      return;
+    }
+    if (job.status === "done") {
+      setBusy(false);
+      setStatus("");
+      lastResult = job.result;
+      render(job.result);
+      return;
+    }
+
+    setStatus(`${job.stage}…`);
+    progressBar.firstElementChild.style.width = `${Math.round(job.progress * 100)}%`;
+    setTimeout(() => poll(jobId), 500);
+  } catch (error) {
+    setBusy(false);
+    setStatus(error.message, true);
+  }
+}
+
+function render(result) {
+  $("results").classList.remove("hidden");
+  $("keyname").textContent = `${result.key.tonic} ${result.key.mode}`;
+  $("keyconf").textContent = `${Math.round(result.key.confidence * 100)}%`;
+  $("tempo").textContent = result.tempo ? `${result.tempo.toFixed(1)} BPM` : "—";
+  $("duration").textContent = formatTime(result.duration);
+  $("version").textContent = `v${result.meta.version || ""}`;
+
+  const alternatives = $("alternatives");
+  alternatives.innerHTML = "";
+  for (const alt of result.key.alternatives || []) {
+    const chip = document.createElement("span");
+    chip.className = "chip";
+    chip.textContent = `${alt.tonic} ${alt.mode}`;
+    alternatives.appendChild(chip);
+  }
+
+  const modulations = $("modulations");
+  modulations.innerHTML = "";
+  for (const mod of result.key.modulations || []) {
+    const span = document.createElement("span");
+    span.innerHTML = `${formatTime(mod.start)}–${formatTime(mod.end)} <b>${mod.tonic} ${mod.mode}</b>`;
+    modulations.appendChild(span);
+  }
+
+  drawTimeline(result);
+
+  const loop = result.progression.main_loop;
+  $("loop").textContent = loop ? `${loop.roman.join(" – ")}  ×${loop.repeats}` : "No repeating loop detected";
+  $("looplabels").textContent = loop ? loop.labels.join(" – ") : "";
+
+  const tbody = $("chordtable").querySelector("tbody");
+  tbody.innerHTML = "";
+  let romanIndex = 0;
+  for (const chord of result.chords) {
+    const numeral = chord.label === "N" ? "" : (result.progression.roman[romanIndex++] || "");
+    const row = document.createElement("tr");
+    for (const [value, cls] of [
+      [formatTime(chord.start), "num"], [formatTime(chord.end), "num"],
+      [chord.label, ""], [numeral, ""], [`${Math.round(chord.confidence * 100)}%`, "num"]
+    ]) {
+      const cell = document.createElement("td");
+      cell.className = cls;
+      cell.textContent = value;
+      row.appendChild(cell);
+    }
+    tbody.appendChild(row);
+  }
+}
+
+function colourFor(label) {
+  if (label === "N") return "var(--line)";
+  const roots = ["C","C#","D","D#","E","F","F#","G","G#","A","A#","B"];
+  return PALETTE[roots.indexOf(label.split(":")[0]) % PALETTE.length] || "#888";
+}
+
+function drawTimeline(result) {
+  const svg = $("timeline");
+  const width = Math.max(svg.parentElement.clientWidth - 4, 320);
+  const height = 112, laneTop = 18, laneHeight = 54;
+  const duration = result.duration || 1;
+  const scale = (t) => (t / duration) * width;
+
+  svg.setAttribute("width", width);
+  svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
+  svg.innerHTML = "";
+
+  const ns = "http://www.w3.org/2000/svg";
+  const make = (tag, attrs, text) => {
+    const node = document.createElementNS(ns, tag);
+    for (const [key, value] of Object.entries(attrs)) node.setAttribute(key, value);
+    if (text !== undefined) node.textContent = text;
+    return node;
+  };
+
+  for (const chord of result.chords) {
+    const x = scale(chord.start);
+    const w = Math.max(scale(chord.end) - x, 1);
+    svg.appendChild(make("rect", {
+      x, y: laneTop, width: w, height: laneHeight, rx: 3,
+      fill: colourFor(chord.label),
+      opacity: chord.label === "N" ? 0.35 : 0.45 + 0.55 * chord.confidence
+    })).appendChild(make("title", {}, `${chord.label}  ${formatTime(chord.start)}–${formatTime(chord.end)}`));
+
+    if (w > 26 && chord.label !== "N") {
+      svg.appendChild(make("text", {
+        x: x + w / 2, y: laneTop + laneHeight / 2 + 4,
+        "text-anchor": "middle", "font-size": 11, "font-weight": 600,
+        fill: "#0b0d12", "pointer-events": "none"
+      }, chord.label.replace(":maj", "").replace(":min", "m").replace(":", "")));
+    }
+  }
+
+  // Time axis: roughly one tick per 60 px, snapped to a readable interval.
+  const target = Math.max(duration / (width / 60), 1);
+  const step = [1, 2, 5, 10, 15, 30, 60, 120, 300].find((s) => s >= target) || 600;
+  for (let t = 0; t <= duration; t += step) {
+    const x = scale(t);
+    svg.appendChild(make("line", {
+      x1: x, y1: laneTop + laneHeight, x2: x, y2: laneTop + laneHeight + 5,
+      stroke: "currentColor", opacity: 0.35
+    }));
+    svg.appendChild(make("text", {
+      x, y: height - 8, "text-anchor": "middle", "font-size": 10,
+      fill: "currentColor", opacity: 0.6
+    }, formatTime(t)));
+  }
+}
+
+function download(filename, text, type) {
+  const blob = new Blob([text], { type });
+  const link = document.createElement("a");
+  link.href = URL.createObjectURL(blob);
+  link.download = filename;
+  link.click();
+  URL.revokeObjectURL(link.href);
+}
+
+$("dl-json").addEventListener("click", () => {
+  if (lastResult) download("analysis.json", JSON.stringify(lastResult, null, 2), "application/json");
+});
+$("dl-lab").addEventListener("click", () => {
+  if (!lastResult) return;
+  const lines = lastResult.chords.map((c) => `${c.start.toFixed(3)}\t${c.end.toFixed(3)}\t${c.label}`);
+  download("analysis.lab", lines.join("\n") + "\n", "text/plain");
+});
+
+window.addEventListener("resize", () => { if (lastResult) drawTimeline(lastResult); });
+</script>
+</body>
+</html>
