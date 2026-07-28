@@ -34,7 +34,7 @@ jobs:
           sudo apt-get install -y ffmpeg
 
       - name: Install package
-        run: pip install -e '.[dev,web,url]'
+        run: pip install -e '.[dev,web,url,eval]'
 
       - name: Lint
         run: ruff check .
@@ -63,3 +63,35 @@ jobs:
           print("end-to-end OK:", result["key"]["tonic"], result["key"]["mode"])
           EOF
           head -3 result.lab
+
+      - name: End-to-end accuracy evaluation
+        run: |
+          # Ground truth is written here by hand, not taken from the analyzer's
+          # own output — a reference derived from the thing under test would
+          # score 1.0 by construction and measure nothing.
+          mkdir -p dataset
+          python - <<'EOF'
+          import sys
+          sys.path.insert(0, "tests")
+          import fixtures as fx
+
+          fx.write_wav("dataset/pop.wav", fx.render_progression(fx.POP_LOOP_C, 2.0, 3))
+
+          lines, time = [], 0.0
+          for _ in range(3):
+              for label in ["C:maj", "G:maj", "A:min", "F:maj"]:
+                  lines.append(f"{time:.6f}\t{time + 2.0:.6f}\t{label}")
+                  time += 2.0
+          open("dataset/pop.lab", "w").write("\n".join(lines) + "\n")
+          open("dataset/pop.key", "w").write("C major\n")
+          EOF
+          cka eval dataset --json eval.json --quiet
+          python - <<'EOF'
+          import json
+          summary = json.load(open("eval.json"))["summary"]
+          assert summary["scored"] == 1, summary
+          assert summary["failed"] == 0, summary
+          assert summary["majmin"] >= 0.75, summary
+          assert summary["key"] == 1.0, summary
+          print("eval OK:", {k: summary[k] for k in ("root", "majmin", "mirex", "key")})
+          EOF

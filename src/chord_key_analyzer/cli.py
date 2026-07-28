@@ -25,6 +25,9 @@ def main() -> None:
 @click.option("--start", type=float, default=0.0, show_default=True, help="Skip to SEC seconds.")
 @click.option("--duration", type=float, default=None, help="Analyse only SEC seconds.")
 @click.option("--triads-only", is_flag=True, help="Restrict vocabulary to maj/min/dim/aug.")
+# Only 'template' is offered here on purpose: get_engine() still knows 'deep',
+# which the web UI's engine field and the Python API can both reach, but the CLI
+# should not advertise a backend that is not implemented yet.
 @click.option(
     "--engine",
     type=click.Choice(["template"], case_sensitive=False),
@@ -106,42 +109,132 @@ def analyze(
     except IngestError as exc:
         status_console.print(f"[red]Error:[/red] {exc}")
         raise SystemExit(2) from exc
-    except ValueError as exc:
-        status_console.print(f"[red]Error:[/red] {exc}")
-        raise SystemExit(2) from exc
 
-    if json_path:
-        write_json(result, json_path)
-    if lab_path:
-        write_lab(result, lab_path)
+    # No `except ValueError` here: the only ValueError the pipeline raises is
+    # get_engine()'s unknown-engine error, which click.Choice already rejects
+    # before we get this far.  Catching it broadly only turned real bugs into a
+    # bare exit 2.  The web UI's own handler in _run_analysis still needs it —
+    # its engine field is not validated by click.
+    try:
+        if json_path:
+            write_json(result, json_path)
+        if lab_path:
+            write_lab(result, lab_path)
+    except OSError as exc:
+        status_console.print(f"[red]Error:[/red] cannot write output: {exc}")
+        raise SystemExit(2) from exc
 
     if not quiet:
         render(result, console=console)
+
+
+@main.command(name="eval")
+@click.argument("dataset", metavar="DATASET", type=click.Path(exists=True, file_okay=False))
+@click.option(
+    "--json", "json_path", metavar="PATH", help="Write the report as JSON ('-' for stdout)."
+)
+@click.option("--csv", "csv_path", metavar="PATH", help="Write the report as CSV ('-' for stdout).")
+@click.option("--triads-only", is_flag=True, help="Restrict vocabulary to maj/min/dim/aug.")
+@click.option(
+    "--engine",
+    type=click.Choice(["template"], case_sensitive=False),
+    default="template",
+    show_default=True,
+    help="Chord recognition backend.",
+)
+@click.option("--quiet", "-q", is_flag=True, help="Suppress the report table.")
+def eval_cmd(
+    dataset: str,
+    json_path: str | None,
+    csv_path: str | None,
+    triads_only: bool,
+    engine: str,
+    quiet: bool,
+) -> None:
+    """Score DATASET against its reference annotations (requires the [eval] extra).
+
+    DATASET is a directory of audio files, each beside a same-stem .lab of
+    reference chords and optionally a .key file. Subdirectories are searched.
+    Annotations are never downloaded — assemble the directory yourself.
+    """
+    # Imported here, like `analyze` does, so `cka --help` stays instant.
+    from .evaluate import (
+        EvalExtraMissing,
+        discover_pairs,
+        evaluate_track,
+        render_report,
+        summarise,
+        write_report_csv,
+        write_report_json,
+    )
+
+    console = Console()
+    status_console = Console(stderr=True)
+
+    pairs, orphans = discover_pairs(dataset)
+    for orphan in orphans:
+        status_console.print(f"[yellow]Skipping[/yellow] {orphan}: no audio file beside it.")
+
+    if not pairs:
+        status_console.print(
+            f"[red]Error:[/red] no evaluable tracks found in {dataset}.\n"
+            "Expected audio files each beside a same-stem .lab of reference chords, e.g.\n"
+            "  dataset/song.wav\n"
+            "  dataset/song.lab\n"
+            "  dataset/song.key   (optional)"
+        )
+        raise SystemExit(2)
+
+    tracks = []
+    try:
+        for index, pair in enumerate(pairs, start=1):
+            if not quiet:
+                status_console.print(f"[dim]({index}/{len(pairs)}) {pair.name}[/dim]")
+            tracks.append(evaluate_track(pair, engine=engine, triads_only=triads_only))
+    except EvalExtraMissing as exc:
+        raise SystemExit(str(exc)) from exc
+
+    summary = summarise(tracks)
+
+    try:
+        if json_path:
+            write_report_json(tracks, summary, json_path)
+        if csv_path:
+            write_report_csv(tracks, summary, csv_path)
+    except OSError as exc:
+        status_console.print(f"[red]Error:[/red] cannot write output: {exc}")
+        raise SystemExit(2) from exc
+
+    if not quiet:
+        render_report(tracks, summary, console=console)
 
 
 @main.command()
 @click.option("--host", default="127.0.0.1", show_default=True, help="Interface to bind.")
 @click.option("--port", default=8321, show_default=True, type=int, help="Port to bind.")
 @click.option("--no-browser", is_flag=True, help="Do not open a browser window.")
-def web(host: str, port: int, no_browser: bool) -> None:
+@click.option("--no-urls", is_flag=True, help="Disable URL ingestion (uploads only).")
+def web(host: str, port: int, no_browser: bool, no_urls: bool) -> None:
     """Launch the local web UI (requires the [web] extra)."""
-    try:
-        import uvicorn  # noqa: F401
-    except ImportError as exc:
-        raise SystemExit(
-            "The web UI needs FastAPI and uvicorn, which are not installed.\n"
-            "Install them with: pip install 'chord-key-analyzer[web]'"
-        ) from exc
+    from .web import LOOPBACK_HOSTS, WebExtraMissing, serve
 
-    from .web import serve
-
-    if host not in {"127.0.0.1", "localhost", "::1"}:
+    if host not in LOOPBACK_HOSTS:
         Console(stderr=True).print(
             f"[yellow]Warning:[/yellow] binding to {host} exposes the analyzer beyond "
-            "this machine. It has no authentication — only do this on a trusted network."
+            "this machine. It has no authentication — only do this on a trusted network. "
+            "URL ingestion is disabled on non-loopback binds."
         )
 
-    serve(host=host, port=port, open_browser=not no_browser)
+    # None lets serve() key the default off the bind; --no-urls forces it off.
+    try:
+        serve(
+            host=host,
+            port=port,
+            open_browser=not no_browser,
+            allow_urls=False if no_urls else None,
+        )
+    except WebExtraMissing as exc:
+        raise SystemExit(str(exc)) from exc
 
 
 if __name__ == "__main__":  # pragma: no cover

@@ -18,6 +18,8 @@ import json
 import shutil
 import subprocess
 import tempfile
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -26,6 +28,11 @@ import numpy as np
 TARGET_SR = 22050
 
 URL_SCHEMES = ("http://", "https://")
+
+#: Ceiling for a single URL download.  Best-effort: yt-dlp can only enforce this
+#: when the server declares a size up front, so a chunked response of unknown
+#: length still downloads in full.
+MAX_DOWNLOAD_BYTES = 200 * 1024 * 1024
 
 
 class IngestError(RuntimeError):
@@ -141,6 +148,16 @@ def load_audio_file(
 
     samples = _decode_with_soundfile(path, sr, offset, duration)
     if samples is None:
+        # libsndfile declined, so nothing has checked --start against the file's
+        # length yet.  Probe first: ffmpeg answers an out-of-range seek with an
+        # empty stream, which would surface as a vague "produced no audio"
+        # instead of the same "past the end" message the soundfile path gives.
+        if offset > 0:
+            probed = probe_duration(path)
+            if probed is not None and offset >= probed:
+                raise IngestError(
+                    f"--start {offset:g}s is past the end of the file ({probed:.2f}s)."
+                )
         samples = _decode_with_ffmpeg(path, sr, offset, duration)
 
     if samples.size == 0:
@@ -182,6 +199,10 @@ def download_url(url: str, dest_dir: str | Path | None = None) -> Path:
 
     yt-dlp is an optional dependency (``pip install 'chord-key-analyzer[url]'``)
     and is imported lazily so the base install never pays for it.
+
+    When ``dest_dir`` is ``None`` a temporary directory is created and **the
+    caller owns it** — nothing here deletes it.  Prefer :func:`downloaded_media`,
+    which ties that directory's lifetime to a ``with`` block.
     """
     try:
         from yt_dlp import YoutubeDL
@@ -202,6 +223,7 @@ def download_url(url: str, dest_dir: str | Path | None = None) -> Path:
         "quiet": True,
         "no_warnings": True,
         "noprogress": True,
+        "max_filesize": MAX_DOWNLOAD_BYTES,
         "postprocessors": [
             {"key": "FFmpegExtractAudio", "preferredcodec": "wav", "preferredquality": "0"}
         ],
@@ -222,12 +244,30 @@ def download_url(url: str, dest_dir: str | Path | None = None) -> Path:
 
     downloaded = sorted(p for p in dest.iterdir() if p.is_file())
     if not downloaded:
-        raise IngestError(f"yt-dlp reported success but produced no file for {url}")
+        raise IngestError(
+            f"yt-dlp reported success but produced no file for {url} "
+            "(the file may exceed the download size cap)."
+        )
     # The post-processed wav is what we want when both it and the source remain.
     for candidate in downloaded:
         if candidate.suffix.lower() == ".wav":
             return candidate
     return downloaded[0]
+
+
+@contextmanager
+def downloaded_media(url: str) -> Iterator[Path]:
+    """Download ``url`` into a temporary directory removed when the block exits.
+
+    :func:`load_audio_file` decodes fully into memory, so the download is only
+    needed for the duration of that call.  Cleanup runs on the failure path too,
+    which is what keeps a bad URL from leaving a stray ``cka-*`` directory behind.
+    """
+    dest = Path(tempfile.mkdtemp(prefix="cka-"))
+    try:
+        yield download_url(url, dest_dir=dest)
+    finally:
+        shutil.rmtree(dest, ignore_errors=True)
 
 
 def resolve_source(
@@ -238,8 +278,8 @@ def resolve_source(
 ) -> LoadedAudio:
     """Load ``target`` — a local path or a yt-dlp-supported URL — into memory."""
     if is_url(target):
-        path = download_url(target)
-        samples = load_audio_file(path, sr=sr, offset=offset, duration=duration)
+        with downloaded_media(target) as path:
+            samples = load_audio_file(path, sr=sr, offset=offset, duration=duration)
         return LoadedAudio(samples=samples, sr=sr, source=target)
 
     samples = load_audio_file(target, sr=sr, offset=offset, duration=duration)

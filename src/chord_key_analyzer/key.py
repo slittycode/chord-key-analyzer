@@ -341,10 +341,16 @@ def detect_modulations(
 
         local_chords = _chords_in_window(chords, start, end)
         if local_chords:
-            # No edge bonus here: see chord_evidence_scores().
-            scores = scores + KEY_CHORD_WEIGHT * _standardise(
-                chord_evidence_scores(local_chords, use_edges=False)
-            )
+            # Damped by the window's own chord variety, exactly as the global key
+            # is.  A 20 s window is *more* prone to thin evidence than a whole
+            # track — one sustained chord can fill it — and undamped evidence let
+            # a single chord drag the window into its own key.
+            support = _evidence_support(local_chords)
+            if support > 0:
+                # No edge bonus here: see chord_evidence_scores().
+                scores = scores + KEY_CHORD_WEIGHT * support * _standardise(
+                    chord_evidence_scores(local_chords, use_edges=False)
+                )
         score_rows.append(scores)
 
     # The local key is a piecewise-constant latent observed through noisy

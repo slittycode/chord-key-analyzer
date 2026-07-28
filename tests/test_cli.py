@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import sys
 
 import pytest
 from click.testing import CliRunner
@@ -34,6 +35,34 @@ def test_analyze_help_documents_the_flags(runner):
     assert result.exit_code == 0
     for flag in ("--json", "--lab", "--start", "--duration", "--triads-only", "--engine"):
         assert flag in result.output
+
+
+def test_web_help_documents_no_urls(runner):
+    result = runner.invoke(main, ["web", "--help"])
+    assert result.exit_code == 0
+    assert "--no-urls" in result.output
+
+
+def test_web_without_fastapi_prints_the_install_hint(runner, monkeypatch):
+    """uvicorn present but FastAPI missing used to crash on the FastAPI names."""
+    web_module = pytest.importorskip("chord_key_analyzer.web")
+    monkeypatch.setattr(web_module, "FASTAPI_AVAILABLE", False)
+
+    result = runner.invoke(main, ["web"])
+    assert result.exit_code != 0
+    assert "chord-key-analyzer[web]" in result.output
+    assert result.exception is None or isinstance(result.exception, SystemExit)
+    assert "Traceback" not in result.output
+
+
+def test_web_without_uvicorn_prints_the_install_hint(runner, monkeypatch):
+    pytest.importorskip("chord_key_analyzer.web")
+    monkeypatch.setitem(sys.modules, "uvicorn", None)
+
+    result = runner.invoke(main, ["web"])
+    assert result.exit_code != 0
+    assert "chord-key-analyzer[web]" in result.output
+    assert "Traceback" not in result.output
 
 
 def test_analyze_renders_a_report(runner, pop_wav):
@@ -103,6 +132,14 @@ def test_analyze_missing_file_exits_with_an_error(runner, tmp_path):
     result = runner.invoke(main, ["analyze", str(tmp_path / "nope.wav")])
     assert result.exit_code == 2
     assert "not found" in result.output.lower()
+
+
+def test_analyze_reports_an_unwritable_output_path(runner, pop_wav, tmp_path):
+    """An unwritable --json must be a clean error, not a traceback."""
+    result = runner.invoke(main, ["analyze", str(pop_wav), "--json", str(tmp_path), "--quiet"])
+    assert result.exit_code == 2
+    assert "cannot write output" in result.output.lower()
+    assert "Traceback" not in result.output
 
 
 def test_analyze_rejects_a_negative_start(runner, pop_wav):

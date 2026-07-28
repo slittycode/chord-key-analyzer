@@ -5,6 +5,7 @@ from __future__ import annotations
 import shutil
 import sys
 import types
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -39,6 +40,20 @@ def test_duration_past_the_end_is_clamped(pop_wav):
 
 
 def test_start_past_the_end_is_an_error(pop_wav):
+    with pytest.raises(ingest.IngestError, match="past the end"):
+        ingest.load_audio_file(pop_wav, offset=999.0)
+
+
+def test_start_past_the_end_is_an_error_on_the_ffmpeg_path(monkeypatch, tmp_path, pop_wav):
+    """Files libsndfile declines must give the same message, not ffmpeg's vague one."""
+    monkeypatch.setattr(ingest, "_decode_with_soundfile", lambda *args, **kwargs: None)
+    monkeypatch.setattr(ingest, "probe_duration", lambda path: 10.0)
+    monkeypatch.setattr(
+        ingest,
+        "_decode_with_ffmpeg",
+        lambda *args, **kwargs: pytest.fail("ffmpeg must not be reached for an out-of-range start"),
+    )
+
     with pytest.raises(ingest.IngestError, match="past the end"):
         ingest.load_audio_file(pop_wav, offset=999.0)
 
@@ -123,6 +138,31 @@ def test_url_download_returns_the_extracted_wav(monkeypatch, tmp_path):
     assert result.suffix == ".wav"
 
 
+def test_url_download_caps_the_file_size(monkeypatch, tmp_path):
+    """An unbounded download is a denial-of-service on the analyzing machine."""
+    captured: dict[str, object] = {}
+
+    class CapturingYoutubeDL:
+        def __init__(self, options):
+            captured.update(options)
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def extract_info(self, url, download=True):
+            fx.write_wav(tmp_path / "song.wav", fx.render_progression(fx.POP_LOOP_C, 0.5, 1))
+            return {"id": "song", "title": "Song"}
+
+    monkeypatch.setitem(sys.modules, "yt_dlp", types.SimpleNamespace(YoutubeDL=CapturingYoutubeDL))
+    monkeypatch.setattr(ingest, "_require_ffmpeg", lambda reason: "/usr/bin/ffmpeg")
+
+    ingest.download_url("https://example.com/song", dest_dir=tmp_path)
+    assert captured["max_filesize"] == ingest.MAX_DOWNLOAD_BYTES
+
+
 def test_url_download_reports_yt_dlp_failures(monkeypatch, tmp_path):
     class FailingYoutubeDL:
         def __init__(self, options):
@@ -142,6 +182,58 @@ def test_url_download_reports_yt_dlp_failures(monkeypatch, tmp_path):
 
     with pytest.raises(ingest.IngestError, match="video unavailable"):
         ingest.download_url("https://example.com/song", dest_dir=tmp_path)
+
+
+def _fake_ytdl_recording_its_dest(monkeypatch, *, write_audio: bool) -> list[Path]:
+    """Install a yt-dlp stub that records the directory yt-dlp was told to use.
+
+    The real ``download_url`` picks that directory itself when no ``dest_dir`` is
+    passed, so reading it back out of ``outtmpl`` is the only way a test can then
+    assert the directory was cleaned up.
+    """
+    recorded: list[Path] = []
+
+    class RecordingYoutubeDL:
+        def __init__(self, options):
+            recorded.append(Path(options["outtmpl"]).parent)
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def extract_info(self, url, download=True):
+            if write_audio:
+                audio = fx.render_progression(fx.POP_LOOP_C, 0.5, 1)
+                fx.write_wav(recorded[-1] / "song.wav", audio)
+            return {"id": "song", "title": "Song"}
+
+    monkeypatch.setitem(sys.modules, "yt_dlp", types.SimpleNamespace(YoutubeDL=RecordingYoutubeDL))
+    monkeypatch.setattr(ingest, "_require_ffmpeg", lambda reason: "/usr/bin/ffmpeg")
+    return recorded
+
+
+def test_resolve_source_cleans_up_the_download_dir(monkeypatch):
+    """A URL analysis must not leave its decoded download behind."""
+    recorded = _fake_ytdl_recording_its_dest(monkeypatch, write_audio=True)
+
+    loaded = ingest.resolve_source("https://example.com/song")
+
+    assert loaded.duration > 0
+    assert len(recorded) == 1
+    assert not recorded[0].exists(), f"download dir {recorded[0]} was left behind"
+
+
+def test_resolve_source_cleans_up_when_decode_fails(monkeypatch):
+    """Cleanup has to survive the failure path, not just the happy one."""
+    recorded = _fake_ytdl_recording_its_dest(monkeypatch, write_audio=False)
+
+    with pytest.raises(ingest.IngestError):
+        ingest.resolve_source("https://example.com/song")
+
+    assert len(recorded) == 1
+    assert not recorded[0].exists(), f"download dir {recorded[0]} was left behind"
 
 
 def test_missing_ffmpeg_message_names_the_installers(monkeypatch):

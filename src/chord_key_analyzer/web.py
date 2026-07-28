@@ -8,13 +8,16 @@ frontends cannot disagree about results.
 
 from __future__ import annotations
 
+import ipaddress
 import shutil
+import socket
 import tempfile
 import threading
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 # FastAPI resolves endpoint annotations against this module's globals, so these
 # names have to live at module scope — importing them inside create_app() leaves
@@ -31,11 +34,77 @@ except ImportError:  # pragma: no cover - depends on install extras
 
 STATIC_DIR = Path(__file__).parent / "web_static"
 
-#: Uploads above this size are rejected before anything touches the disk.
+#: Uploads stream to disk in 1 MiB chunks and are aborted, with the partial file
+#: removed, as soon as the running total passes this limit.
 MAX_UPLOAD_BYTES = 200 * 1024 * 1024
 
 #: Finished jobs are kept only so the page can poll for them once.
 MAX_JOBS = 32
+
+#: Binds where the server is reachable only from this machine.
+LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})
+
+
+def _address_is_public(address: str) -> bool:
+    """True when ``address`` is a routable public IP."""
+    try:
+        ip = ipaddress.ip_address(address)
+    except ValueError:
+        return False
+    # ::ffff:10.0.0.1 is 10.0.0.1 wearing an IPv6 hat — judge the mapped address,
+    # or every private range is reachable again through its mapped spelling.
+    if isinstance(ip, ipaddress.IPv6Address) and ip.ipv4_mapped is not None:
+        ip = ip.ipv4_mapped
+    return not (
+        ip.is_private
+        or ip.is_loopback
+        or ip.is_link_local
+        or ip.is_multicast
+        or ip.is_reserved
+        or ip.is_unspecified
+    )
+
+
+def url_rejection_reason(url: str) -> str | None:
+    """Why ``url`` must not be fetched, or ``None`` if it looks acceptable.
+
+    Keeps the analyzer from being used as an HTTP proxy into whatever the host
+    can reach — link-local cloud metadata endpoints above all.
+
+    Best-effort by construction: yt-dlp resolves the name again when it fetches,
+    so a DNS entry that changes in between still wins.  Defending against that
+    needs resolve-then-connect-by-IP plumbing through yt-dlp, which is out of
+    proportion for a tool that binds to localhost by default.
+    """
+    parts = urlsplit(url)
+    if parts.scheme not in {"http", "https"}:
+        return "URL must start with http:// or https://"
+
+    host = parts.hostname
+    if not host:
+        return "URL has no host."
+
+    try:
+        ipaddress.ip_address(host)
+    except ValueError:
+        pass  # a name, not a literal — resolve it below
+    else:
+        if not _address_is_public(host):
+            return f"Refusing to fetch a non-public address: {host}"
+        return None
+
+    try:
+        resolved = socket.getaddrinfo(host, None, proto=socket.IPPROTO_TCP)
+    except socket.gaierror:
+        return f"Could not resolve host: {host}"
+
+    # Every answer has to be public: a name resolving to both a public and a
+    # private address must not be fetchable by winning the race.
+    for info in resolved:
+        address = info[4][0]
+        if not _address_is_public(address):
+            return f"{host} resolves to a non-public address ({address})."
+    return None
 
 
 class WebExtraMissing(RuntimeError):
@@ -48,6 +117,21 @@ class WebExtraMissing(RuntimeError):
 
     def __init__(self) -> None:
         super().__init__(self.MESSAGE)
+
+
+def require_web_extra() -> None:
+    """Raise :class:`WebExtraMissing` unless *both* halves of the extra import.
+
+    One check for the whole extra: probing only uvicorn let a half-installed
+    environment past the door and then crashed on the FastAPI names instead of
+    printing the install hint.
+    """
+    if not FASTAPI_AVAILABLE:
+        raise WebExtraMissing()
+    try:
+        import uvicorn  # noqa: F401
+    except ImportError as exc:
+        raise WebExtraMissing() from exc
 
 
 @dataclass
@@ -96,6 +180,10 @@ class JobStore:
         with self._lock:
             return self._jobs.get(job_id)
 
+    def __len__(self) -> int:
+        with self._lock:
+            return len(self._jobs)
+
 
 def _run_analysis(job: Job, target: str, options: dict[str, Any], cleanup: Path | None) -> None:
     """Worker body: analyse ``target`` and record the outcome on ``job``."""
@@ -134,7 +222,9 @@ def create_app(allow_urls: bool = True):
     if not FASTAPI_AVAILABLE:
         raise WebExtraMissing()
 
-    app = FastAPI(title="chord-key-analyzer", version="0.1.0", docs_url=None, redoc_url=None)
+    from . import __version__
+
+    app = FastAPI(title="chord-key-analyzer", version=__version__, docs_url=None, redoc_url=None)
     jobs = JobStore()
     app.state.jobs = jobs
 
@@ -164,8 +254,9 @@ def create_app(allow_urls: bool = True):
         if file is not None and url:
             raise HTTPException(status_code=400, detail="Provide a file or a url, not both.")
 
-        job = jobs.create()
-
+        # Every rejection below happens before jobs.create(): a job slot taken by
+        # a request that never runs evicts a real, finished job from the bounded
+        # store, losing a result its page is still polling for.
         if file is not None:
             temp_dir = Path(tempfile.mkdtemp(prefix="cka-web-"))
             suffix = Path(file.filename or "upload").suffix or ".audio"
@@ -188,6 +279,7 @@ def create_app(allow_urls: bool = True):
                 shutil.rmtree(temp_dir, ignore_errors=True)
                 raise HTTPException(status_code=400, detail="Uploaded file is empty.")
 
+            job = jobs.create()
             background.add_task(
                 _run_analysis, job, str(destination), _options(triads_only, engine), temp_dir
             )
@@ -195,10 +287,11 @@ def create_app(allow_urls: bool = True):
             if not allow_urls:
                 raise HTTPException(status_code=403, detail="URL input is disabled on this server.")
             assert url is not None
-            if not url.startswith(("http://", "https://")):
-                raise HTTPException(
-                    status_code=400, detail="URL must start with http:// or https://"
-                )
+            rejection = url_rejection_reason(url)
+            if rejection is not None:
+                raise HTTPException(status_code=400, detail=rejection)
+
+            job = jobs.create()
             background.add_task(_run_analysis, job, url, _options(triads_only, engine), None)
 
         return JSONResponse({"job": job.id}, status_code=202)
@@ -213,14 +306,26 @@ def create_app(allow_urls: bool = True):
     return app
 
 
-def serve(host: str = "127.0.0.1", port: int = 8321, open_browser: bool = True) -> None:
-    """Run the web UI with uvicorn (blocking)."""
-    try:
-        import uvicorn
-    except ImportError as exc:
-        raise WebExtraMissing() from exc
+def serve(
+    host: str = "127.0.0.1",
+    port: int = 8321,
+    open_browser: bool = True,
+    allow_urls: bool | None = None,
+) -> None:
+    """Run the web UI with uvicorn (blocking).
 
-    app = create_app()
+    ``allow_urls=None`` means "decide from the bind": URL ingestion stays on for
+    loopback binds, and is off anywhere else.  A server reachable by other
+    machines has no authentication, and URL input is the one feature that makes
+    it fetch on a stranger's behalf.
+    """
+    require_web_extra()
+    import uvicorn
+
+    if allow_urls is None:
+        allow_urls = host in LOOPBACK_HOSTS
+
+    app = create_app(allow_urls=allow_urls)
 
     if open_browser:
         import webbrowser
