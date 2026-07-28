@@ -11,6 +11,7 @@ from chord_key_analyzer.features import extract_features
 from chord_key_analyzer.key import (
     chord_evidence_scores,
     detect_key,
+    detect_modulations,
     estimate_key_from_chroma,
     score_chroma_vector,
 )
@@ -147,6 +148,75 @@ def test_modulation_is_detected_and_localised():
     # can be placed, so allow one window of slack around the true boundary.
     assert abs(e_major[0].start - boundary) <= 20.0
     assert e_major[0].end > boundary
+
+
+def test_modulation_scan_damps_evidence_by_window_support(monkeypatch):
+    """Each window's chord evidence must be scaled by that window's own variety.
+
+    Deterministic counterpart to the behavioural test below: it asserts the
+    damping is consulted per window rather than relying on a score margin.
+    """
+    from chord_key_analyzer import key as key_module
+
+    audio = fx.render_progression(build_progression("C", MAJOR_DEGREES), 2.0, 6)
+    features = extract_features(audio, fx.SR)
+    chords = TemplateHMMEngine().analyze(features)
+
+    calls: list[int] = []
+    original = key_module._evidence_support
+
+    def recording_support(segments):
+        calls.append(len(segments))
+        return original(segments)
+
+    monkeypatch.setattr(key_module, "_evidence_support", recording_support)
+    key_module.detect_modulations(features, ("C", "major"), chords=chords)
+
+    assert calls, "the modulation scan never consulted the evidence-support damping"
+    assert all(count > 0 for count in calls)
+
+
+def test_thin_evidence_pulls_the_scan_less_than_undamped():
+    """Damping must measurably weaken what one sustained chord can do.
+
+    Asserted on the mixed score rather than on the winning key: with this
+    fixture a single chord damps to support 1/3, and 1/3 of the evidence margin
+    (1.51) still exceeds the chroma margin between C major and its neighbour
+    (0.94), so the window's winner does not flip.  Damping narrows that gap by
+    two thirds, which is the effect the fix is actually claiming.
+    """
+    from chord_key_analyzer import key as key_module
+    from chord_key_analyzer.models import ChordSegment
+
+    sustained = [ChordSegment(0.0, 45.0, "G:maj")]
+
+    support = key_module._evidence_support(sustained)
+    assert support == pytest.approx(1 / 3), "one distinct chord is one third of full support"
+
+    evidence = key_module._standardise(
+        key_module.chord_evidence_scores(sustained, use_edges=False)
+    )
+    c_index = key_module._TEMPLATE_NAMES.index(("C", "major"))
+    g_index = key_module._TEMPLATE_NAMES.index(("G", "major"))
+    margin = evidence[g_index] - evidence[c_index]
+
+    undamped = key_module.KEY_CHORD_WEIGHT * margin
+    damped = key_module.KEY_CHORD_WEIGHT * support * margin
+    assert damped < undamped / 2
+
+
+def test_no_chord_evidence_leaves_the_scan_untouched():
+    """All-N chords carry zero support, so they must not perturb the scan."""
+    from chord_key_analyzer.models import ChordSegment
+
+    audio = fx.render_progression(build_progression("C", MAJOR_DEGREES), 2.0, 6)
+    features = extract_features(audio, fx.SR)
+    duration = len(audio) / fx.SR
+    silent = [ChordSegment(0.0, duration, "N")]
+
+    with_n = detect_modulations(features, ("C", "major"), chords=silent)
+    without = detect_modulations(features, ("C", "major"), chords=None)
+    assert [(m.name, m.start) for m in with_n] == [(m.name, m.start) for m in without]
 
 
 def test_single_key_track_reports_no_modulations():
