@@ -148,6 +148,16 @@ def load_audio_file(
 
     samples = _decode_with_soundfile(path, sr, offset, duration)
     if samples is None:
+        # libsndfile declined, so nothing has checked --start against the file's
+        # length yet.  Probe first: ffmpeg answers an out-of-range seek with an
+        # empty stream, which would surface as a vague "produced no audio"
+        # instead of the same "past the end" message the soundfile path gives.
+        if offset > 0:
+            probed = probe_duration(path)
+            if probed is not None and offset >= probed:
+                raise IngestError(
+                    f"--start {offset:g}s is past the end of the file ({probed:.2f}s)."
+                )
         samples = _decode_with_ffmpeg(path, sr, offset, duration)
 
     if samples.size == 0:

@@ -25,6 +25,9 @@ def main() -> None:
 @click.option("--start", type=float, default=0.0, show_default=True, help="Skip to SEC seconds.")
 @click.option("--duration", type=float, default=None, help="Analyse only SEC seconds.")
 @click.option("--triads-only", is_flag=True, help="Restrict vocabulary to maj/min/dim/aug.")
+# Only 'template' is offered here on purpose: get_engine() still knows 'deep',
+# which the web UI's engine field and the Python API can both reach, but the CLI
+# should not advertise a backend that is not implemented yet.
 @click.option(
     "--engine",
     type=click.Choice(["template"], case_sensitive=False),
@@ -106,14 +109,20 @@ def analyze(
     except IngestError as exc:
         status_console.print(f"[red]Error:[/red] {exc}")
         raise SystemExit(2) from exc
-    except ValueError as exc:
-        status_console.print(f"[red]Error:[/red] {exc}")
-        raise SystemExit(2) from exc
 
-    if json_path:
-        write_json(result, json_path)
-    if lab_path:
-        write_lab(result, lab_path)
+    # No `except ValueError` here: the only ValueError the pipeline raises is
+    # get_engine()'s unknown-engine error, which click.Choice already rejects
+    # before we get this far.  Catching it broadly only turned real bugs into a
+    # bare exit 2.  The web UI's own handler in _run_analysis still needs it —
+    # its engine field is not validated by click.
+    try:
+        if json_path:
+            write_json(result, json_path)
+        if lab_path:
+            write_lab(result, lab_path)
+    except OSError as exc:
+        status_console.print(f"[red]Error:[/red] cannot write output: {exc}")
+        raise SystemExit(2) from exc
 
     if not quiet:
         render(result, console=console)

@@ -44,6 +44,20 @@ def test_start_past_the_end_is_an_error(pop_wav):
         ingest.load_audio_file(pop_wav, offset=999.0)
 
 
+def test_start_past_the_end_is_an_error_on_the_ffmpeg_path(monkeypatch, tmp_path, pop_wav):
+    """Files libsndfile declines must give the same message, not ffmpeg's vague one."""
+    monkeypatch.setattr(ingest, "_decode_with_soundfile", lambda *args, **kwargs: None)
+    monkeypatch.setattr(ingest, "probe_duration", lambda path: 10.0)
+    monkeypatch.setattr(
+        ingest,
+        "_decode_with_ffmpeg",
+        lambda *args, **kwargs: pytest.fail("ffmpeg must not be reached for an out-of-range start"),
+    )
+
+    with pytest.raises(ingest.IngestError, match="past the end"):
+        ingest.load_audio_file(pop_wav, offset=999.0)
+
+
 def test_missing_file_is_an_error(tmp_path):
     with pytest.raises(ingest.IngestError, match="not found"):
         ingest.load_audio_file(tmp_path / "nope.wav")

@@ -97,7 +97,7 @@ def build_chord_templates(
 
     rows: list[np.ndarray] = []
     labels: list[str] = []
-    seen: dict[bytes, str] = {}
+    seen: set[bytes] = set()
     for root in range(12):
         for quality in qualities:
             intervals = CHORD_QUALITIES[quality]
@@ -110,7 +110,7 @@ def build_chord_templates(
                 # splits probability mass between identical templates.  Keep the
                 # lowest-root spelling as the canonical one.
                 continue
-            seen[fingerprint] = chord_label(root, quality)
+            seen.add(fingerprint)
             rows.append(np.roll(_harmonic_template(intervals), root))
             labels.append(chord_label(root, quality))
 

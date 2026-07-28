@@ -134,6 +134,14 @@ def test_analyze_missing_file_exits_with_an_error(runner, tmp_path):
     assert "not found" in result.output.lower()
 
 
+def test_analyze_reports_an_unwritable_output_path(runner, pop_wav, tmp_path):
+    """An unwritable --json must be a clean error, not a traceback."""
+    result = runner.invoke(main, ["analyze", str(pop_wav), "--json", str(tmp_path), "--quiet"])
+    assert result.exit_code == 2
+    assert "cannot write output" in result.output.lower()
+    assert "Traceback" not in result.output
+
+
 def test_analyze_rejects_a_negative_start(runner, pop_wav):
     result = runner.invoke(main, ["analyze", str(pop_wav), "--start", "-5"])
     assert result.exit_code != 0

@@ -180,6 +180,10 @@ class JobStore:
         with self._lock:
             return self._jobs.get(job_id)
 
+    def __len__(self) -> int:
+        with self._lock:
+            return len(self._jobs)
+
 
 def _run_analysis(job: Job, target: str, options: dict[str, Any], cleanup: Path | None) -> None:
     """Worker body: analyse ``target`` and record the outcome on ``job``."""
@@ -218,7 +222,9 @@ def create_app(allow_urls: bool = True):
     if not FASTAPI_AVAILABLE:
         raise WebExtraMissing()
 
-    app = FastAPI(title="chord-key-analyzer", version="0.1.0", docs_url=None, redoc_url=None)
+    from . import __version__
+
+    app = FastAPI(title="chord-key-analyzer", version=__version__, docs_url=None, redoc_url=None)
     jobs = JobStore()
     app.state.jobs = jobs
 
@@ -248,8 +254,9 @@ def create_app(allow_urls: bool = True):
         if file is not None and url:
             raise HTTPException(status_code=400, detail="Provide a file or a url, not both.")
 
-        job = jobs.create()
-
+        # Every rejection below happens before jobs.create(): a job slot taken by
+        # a request that never runs evicts a real, finished job from the bounded
+        # store, losing a result its page is still polling for.
         if file is not None:
             temp_dir = Path(tempfile.mkdtemp(prefix="cka-web-"))
             suffix = Path(file.filename or "upload").suffix or ".audio"
@@ -272,6 +279,7 @@ def create_app(allow_urls: bool = True):
                 shutil.rmtree(temp_dir, ignore_errors=True)
                 raise HTTPException(status_code=400, detail="Uploaded file is empty.")
 
+            job = jobs.create()
             background.add_task(
                 _run_analysis, job, str(destination), _options(triads_only, engine), temp_dir
             )
@@ -282,6 +290,8 @@ def create_app(allow_urls: bool = True):
             rejection = url_rejection_reason(url)
             if rejection is not None:
                 raise HTTPException(status_code=400, detail=rejection)
+
+            job = jobs.create()
             background.add_task(_run_analysis, job, url, _options(triads_only, engine), None)
 
         return JSONResponse({"job": job.id}, status_code=202)

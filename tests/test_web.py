@@ -43,8 +43,46 @@ def test_static_page_is_self_contained():
 
 
 def test_health(client):
+    from chord_key_analyzer import __version__
+
     payload = client.get("/health").json()
     assert payload["status"] == "ok"
+    assert payload["version"] == __version__
+
+
+def test_openapi_version_tracks_the_package():
+    """The app's version must not be a third hand-maintained copy of 0.1.0."""
+    from chord_key_analyzer import __version__
+
+    assert create_app().version == __version__
+
+
+def test_rejected_requests_do_not_take_job_slots():
+    """A slot taken by a rejected request evicts a real result from the store."""
+    app = create_app()
+    local = TestClient(app)
+
+    assert local.post("/analyze").status_code == 400
+    assert local.post("/analyze", data={"url": "http://10.0.0.5/song"}).status_code == 400
+    assert len(app.state.jobs) == 0
+
+    response = local.post("/analyze", files={"file": ("junk.wav", b"not audio", "audio/wav")})
+    assert response.status_code == 202
+    assert len(app.state.jobs) == 1
+
+
+def test_unimplemented_engine_reports_a_job_error(client, pop_wav):
+    """`deep` is unreachable from the CLI but the web engine field can ask for it."""
+    with open(pop_wav, "rb") as handle:
+        response = client.post(
+            "/analyze",
+            files={"file": ("pop.wav", handle, "audio/wav")},
+            data={"engine": "deep"},
+        )
+    assert response.status_code == 202
+    job = client.get(f"/jobs/{response.json()['job']}").json()
+    assert job["status"] == "error"
+    assert "not implemented" in job["error"].lower()
 
 
 def test_analyze_an_uploaded_file(client, pop_wav):
