@@ -174,5 +174,11 @@ jobs:
           grep -F 'chord-key-analyzer[eval]' eval-hint.txt
           grep -F 'chord-key-analyzer[web]' web-hint.txt
           grep -F 'chord-key-analyzer[url]' url-hint.txt
-          grep -L Traceback eval-hint.txt web-hint.txt url-hint.txt
+          # `grep -l` exits 0 only when it finds one, which is the failure we are
+          # looking for. (`grep -L` lists the *clean* files but still exits 1 when
+          # nothing matched, so under `set -e` it fails exactly when it passes.)
+          if grep -l Traceback eval-hint.txt web-hint.txt url-hint.txt; then
+            echo "a missing extra printed a traceback instead of its install hint"
+            exit 1
+          fi
           echo "install hints OK"
