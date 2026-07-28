@@ -1,0 +1,148 @@
+"""``cka`` command line interface."""
+
+from __future__ import annotations
+
+import sys
+
+import click
+from rich.console import Console
+
+from . import __version__
+
+CONTEXT_SETTINGS = {"help_option_names": ["-h", "--help"]}
+
+
+@click.group(context_settings=CONTEXT_SETTINGS)
+@click.version_option(__version__, "-V", "--version", prog_name="cka")
+def main() -> None:
+    """Offline key, chord and progression analysis for audio files and URLs."""
+
+
+@main.command()
+@click.argument("song", metavar="SONG")
+@click.option("--json", "json_path", metavar="PATH", help="Write JSON result ('-' for stdout).")
+@click.option("--lab", "lab_path", metavar="PATH", help="Write MIREX .lab chords ('-' for stdout).")
+@click.option("--start", type=float, default=0.0, show_default=True, help="Skip to SEC seconds.")
+@click.option("--duration", type=float, default=None, help="Analyse only SEC seconds.")
+@click.option("--triads-only", is_flag=True, help="Restrict vocabulary to maj/min/dim/aug.")
+@click.option(
+    "--engine",
+    type=click.Choice(["template"], case_sensitive=False),
+    default="template",
+    show_default=True,
+    help="Chord recognition backend.",
+)
+@click.option("--no-hpss", is_flag=True, help="Skip harmonic/percussive separation (faster).")
+@click.option("--no-beat-snap", is_flag=True, help="Do not snap chord boundaries to beats.")
+@click.option("--no-modulations", is_flag=True, help="Skip the sliding-window modulation scan.")
+@click.option("--quiet", "-q", is_flag=True, help="Suppress the terminal report.")
+def analyze(
+    song: str,
+    json_path: str | None,
+    lab_path: str | None,
+    start: float,
+    duration: float | None,
+    triads_only: bool,
+    engine: str,
+    no_hpss: bool,
+    no_beat_snap: bool,
+    no_modulations: bool,
+    quiet: bool,
+) -> None:
+    """Analyse SONG, a local audio file or a yt-dlp-supported URL."""
+    # Imported here so `cka --help` and `cka --version` stay instant: librosa
+    # and numba together cost a couple of seconds at import time.
+    from .ingest import IngestError
+    from .output import render, write_json, write_lab
+    from .pipeline import analyze_source
+
+    console = Console()
+    # Progress and reports go to stderr so `--json -` stays pipeable.
+    status_console = Console(stderr=True)
+
+    if start < 0:
+        raise click.BadParameter("--start must be >= 0")
+    if duration is not None and duration <= 0:
+        raise click.BadParameter("--duration must be > 0")
+
+    stage_labels = {
+        "loading": "Loading audio",
+        "features": "Extracting features",
+        "key": "Detecting key",
+        "chords": "Recognising chords",
+        "progression": "Analysing progression",
+        "done": "Done",
+    }
+
+    try:
+        if quiet:
+            result = analyze_source(
+                song,
+                engine=engine,
+                triads_only=triads_only,
+                harmonic=not no_hpss,
+                beat_snap=not no_beat_snap,
+                scan_modulations=not no_modulations,
+                start=start,
+                duration=duration,
+            )
+        else:
+            with status_console.status("Loading audio…") as status:
+
+                def progress(stage: str, fraction: float) -> None:
+                    status.update(f"{stage_labels.get(stage, stage)}…")
+
+                result = analyze_source(
+                    song,
+                    engine=engine,
+                    triads_only=triads_only,
+                    harmonic=not no_hpss,
+                    beat_snap=not no_beat_snap,
+                    scan_modulations=not no_modulations,
+                    start=start,
+                    duration=duration,
+                    progress=progress,
+                )
+    except IngestError as exc:
+        status_console.print(f"[red]Error:[/red] {exc}")
+        raise SystemExit(2) from exc
+    except ValueError as exc:
+        status_console.print(f"[red]Error:[/red] {exc}")
+        raise SystemExit(2) from exc
+
+    if json_path:
+        write_json(result, json_path)
+    if lab_path:
+        write_lab(result, lab_path)
+
+    if not quiet:
+        render(result, console=console)
+
+
+@main.command()
+@click.option("--host", default="127.0.0.1", show_default=True, help="Interface to bind.")
+@click.option("--port", default=8321, show_default=True, type=int, help="Port to bind.")
+@click.option("--no-browser", is_flag=True, help="Do not open a browser window.")
+def web(host: str, port: int, no_browser: bool) -> None:
+    """Launch the local web UI (requires the [web] extra)."""
+    try:
+        import uvicorn  # noqa: F401
+    except ImportError as exc:
+        raise SystemExit(
+            "The web UI needs FastAPI and uvicorn, which are not installed.\n"
+            "Install them with: pip install 'chord-key-analyzer[web]'"
+        ) from exc
+
+    from .web import serve
+
+    if host not in {"127.0.0.1", "localhost", "::1"}:
+        Console(stderr=True).print(
+            f"[yellow]Warning:[/yellow] binding to {host} exposes the analyzer beyond "
+            "this machine. It has no authentication — only do this on a trusted network."
+        )
+
+    serve(host=host, port=port, open_browser=not no_browser)
+
+
+if __name__ == "__main__":  # pragma: no cover
+    sys.exit(main())

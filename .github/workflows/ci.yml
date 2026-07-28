@@ -1,0 +1,62 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      - name: Install ffmpeg
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg
+
+      - name: Install package
+        run: pip install -e '.[dev,web,url]'
+
+      - name: Lint
+        run: ruff check .
+
+      - name: Test
+        run: pytest -q
+
+      - name: End-to-end CLI run
+        run: |
+          python - <<'EOF'
+          import sys
+          sys.path.insert(0, "tests")
+          import fixtures as fx
+          fx.write_wav("fixture.wav", fx.render_progression(fx.POP_LOOP_C, 2.0, 3))
+          EOF
+          cka analyze fixture.wav
+          cka analyze fixture.wav --json result.json --lab result.lab --quiet
+          python - <<'EOF'
+          import json
+          result = json.load(open("result.json"))
+          assert result["schema"] == 1, result["schema"]
+          assert (result["key"]["tonic"], result["key"]["mode"]) == ("C", "major"), result["key"]
+          assert result["progression"]["main_loop"]["roman"] == ["I", "V", "vi", "IV"], result
+          labels = [c["label"] for c in result["chords"]]
+          assert labels[:4] == ["C:maj", "G:maj", "A:min", "F:maj"], labels
+          print("end-to-end OK:", result["key"]["tonic"], result["key"]["mode"])
+          EOF
+          head -3 result.lab

@@ -1,107 +1,188 @@
-# chord-key-analyzer — Initial Build Plan
+# chord-key-analyzer — design plan
 
-## Context
+This is the plan the project was built from, followed by the decisions that changed
+during implementation and why.
 
-`slittycode/chord-key-analyzer` is an empty repo (zero commits). The goal is a **lean, fully offline, LLM-API-key-free** music analyzer inspired by `slittycode/ableton-sonic-analyzer` (ASA) — but deliberately *not* a port of it. ASA is a three-layer FastAPI + React + Essentia + Gemini stack; this project keeps only its best idea (deterministic DSP measurements are authoritative) and drops everything that made it heavy: no web stack, no Gemini/cloud interpretation, no stem separation, no Essentia (notoriously painful to install).
+## Goal
 
-What it does: given a song — a local audio file or a URL from yt-dlp-supported sites (YouTube, SoundCloud, Bandcamp) — report:
-1. **Key** of the track (tonic + mode, confidence, alternatives, modulations),
-2. **Chords** on a timeline (label + start/end + confidence),
-3. **Progression** (Roman-numeral analysis relative to the detected key, repeated-loop summary).
+A lean, fully offline, LLM-API-key-free music analyzer. Given a song — a local audio file
+or a URL from a yt-dlp-supported site — report:
 
-Genre-general: rock, classical, jazz, electronic, etc. — not tuned only to EDM.
+1. **Key** (tonic + mode, confidence, alternatives, modulations)
+2. **Chords** on a timeline (label + start/end + confidence)
+3. **Progression** (Roman numerals relative to the detected key, repeated-loop summary)
 
-### Decisions (confirmed with the user)
-- **Engine**: hybrid — DSP core (numpy/librosa) as the always-works default, with a *pluggable engine interface* so a local neural backend (e.g. crema) can be added later as an optional extra. No heavy ML deps in the base install.
-- **Interface**: CLI (`cka analyze <file-or-url>`) **plus a minimal local web UI** (`cka web`): drag-drop a file or paste a URL, see the key card and a chord timeline. Kept lean: one static vanilla-JS/HTML page served by a small local FastAPI app — **no React/Vite/node toolchain**, unlike ASA.
-- **Sources**: local files (anything ffmpeg decodes) + yt-dlp URLs. **Spotify / Apple Music streams are out of scope**: they are DRM-protected and cannot be decoded offline without circumvention. Document this clearly in the README; DRM-free purchased files (Bandcamp downloads, iTunes-store DRM-free m4a) work as local files.
-- **Chord vocabulary**: triads + sevenths — maj, min, dim, aug, maj7, min7, 7 (dom7), plus an explicit `N` (no-chord) state. Richer vocab (sus/6ths/inversions) deferred; it hurts accuracy more than it helps at this stage.
+Genre-general: rock, classical, jazz, electronic — not tuned only to EDM.
 
-## Tech stack
+It is inspired by [`ableton-sonic-analyzer`](https://github.com/slittycode/ableton-sonic-analyzer)
+(ASA) but is deliberately not a port of it. It keeps ASA's best idea — deterministic DSP
+measurements are authoritative — and drops what made ASA heavy: the FastAPI + React web
+stack, Gemini/cloud interpretation, stem separation, and Essentia.
 
-- **Python ≥ 3.11**, packaged with `pyproject.toml` (hatchling or setuptools), installable via `pip`/`uv`. Package name `chord_key_analyzer`, CLI entry point **`cka`**.
-- **Core deps (kept minimal)**: `numpy`, `librosa` (chroma/CQT, beat tracking, tuning estimation; pulls scipy/soundfile/numba — accepted as the pragmatic floor for correct DSP), `rich` (terminal output), `click` (CLI).
-- **Optional extras**:
-  - `cka[url]` → `yt-dlp` (URL ingestion)
-  - `cka[web]` → `fastapi` + `uvicorn` (local web UI; lazy-imported, clear error if `cka web` is run without it)
-  - `cka[deep]` → reserved for a future neural chord backend (e.g. `crema`); **not implemented in v1**, but the engine interface must make it a drop-in.
-- **Runtime requirement**: `ffmpeg` on PATH (decoding mp3/m4a/etc. and as yt-dlp's post-processor). Detect and fail with a friendly install hint.
-- **No network calls ever** except when the user explicitly passes a URL to fetch.
+## Decisions
 
-## Architecture / module layout
+- **Engine**: hybrid. A DSP core (numpy/librosa) is the always-works default, behind a
+  pluggable engine interface so a local neural backend (e.g. crema) can be added later.
+  No heavy ML dependencies in the base install.
+- **Interface**: CLI (`cka analyze`) plus a minimal local web UI (`cka web`) — one static
+  vanilla-JS page served by a small FastAPI app. No React/Vite/node toolchain.
+- **Sources**: local files (anything ffmpeg decodes) + yt-dlp URLs. Spotify and Apple
+  Music streams are out of scope: they are DRM-protected and cannot be decoded offline
+  without circumvention. DRM-free purchased files work as ordinary local files.
+- **Chord vocabulary**: triads + sevenths — maj, min, dim, aug, maj7, min7, 7 — plus an
+  explicit `N` (no-chord) state. Richer vocabulary (sus, 6ths, inversions) is deferred;
+  at this stage it costs more accuracy than it buys.
 
-```
-chord_key_analyzer/
-  __init__.py
-  cli.py            # click CLI: `cka analyze`, `cka --version`
-  ingest.py         # local file decode (ffmpeg→mono float32 @22050Hz), URL fetch via yt-dlp (lazy import)
-  features.py       # tuning estimation, CQT chroma, beat tracking, beat-synchronous chroma aggregation
-  key.py            # Krumhansl-Schmuckler + Temperley profile correlation; global key, alternatives, windowed modulation scan
-  chords.py         # ChordEngine protocol; TemplateHMMEngine: chord templates, log-likelihood scoring, Viterbi smoothing, segment merge
-  progression.py    # chords → Roman numerals in detected key; loop/repeat detection; progression summary
-  output.py         # rich terminal rendering, JSON export, MIREX .lab export
-  models.py         # dataclasses: AnalysisResult, KeyEstimate, ChordSegment, ProgressionSummary
-  web.py            # `cka web`: local FastAPI app — POST /analyze (file upload or URL), GET / serves static page
-  web_static/
-    index.html      # single vanilla-JS page: drag-drop/URL input, key card, SVG chord timeline, JSON download
-tests/
-  fixtures.py       # synthesize WAVs with known chords/keys (numpy-rendered triads/7ths over a progression)
-  test_key.py test_chords.py test_progression.py test_ingest.py test_cli.py
-.github/workflows/ci.yml   # lint (ruff) + pytest on push/PR
-```
+## Stack
 
-### Analysis pipeline (TemplateHMMEngine, the v1 default)
-1. **Decode** to mono float32 at 22050 Hz via ffmpeg (subprocess piping to raw PCM — avoids audioread flakiness).
-2. **Tuning correction** (`librosa.estimate_tuning`) so slightly-detuned recordings don't smear chroma bins.
-3. **Chroma**: `librosa.feature.chroma_cqt` (36 bins/octave folded to 12), median-filtered.
-4. **Beat-sync**: `librosa.beat.beat_track`; average chroma per beat (fallback to fixed ~0.5 s windows when beat tracking is unreliable, e.g. rubato classical — decide via beat-strength confidence).
-5. **Key**: correlate the global average chroma against all 24 rotated Krumhansl-Schmuckler *and* Temperley profiles; report best key, confidence (correlation margin over runner-up), top-3 alternatives. **Modulation scan**: same correlation over a sliding window (~20 s, 5 s hop); report segments where the winning key changes stably.
-6. **Chords**: 12 roots × 7 qualities + N = 85 states. Score each beat's chroma against L1-normalized binary-with-harmonic-weighting templates (log domain); **Viterbi decode** with a self-transition bonus (sticky chords) to suppress frame-level flicker; merge adjacent identical labels into `ChordSegment(start, end, label, confidence)`.
-7. **Progression**: map segments to Roman numerals in the detected key (borrowed chords labeled literally, e.g. `bVII`); collapse consecutive repeats; find the dominant repeating loop (e.g. `I–V–vi–IV ×12`) via n-gram counting over the segment sequence.
+- Python ≥ 3.11, `pyproject.toml` (hatchling), package `chord_key_analyzer`, CLI `cka`.
+- Core deps: `numpy`, `librosa`, `soundfile`, `rich`, `click`.
+- Extras: `[url]` → yt-dlp; `[web]` → fastapi + uvicorn; `[deep]` → reserved for a future
+  neural backend, empty in v1; `[dev]` → pytest, ruff, httpx.
+- ffmpeg on PATH for compressed formats and as yt-dlp's post-processor.
+- No network calls except when the user explicitly passes a URL.
 
-### Engine interface (the "hybrid" seam)
-`ChordEngine` protocol: `analyze(audio: np.ndarray, sr: int) -> list[ChordSegment]`. v1 ships only `TemplateHMMEngine`; CLI flag `--engine template` (default) reserves the namespace so `--engine crema` can arrive later without breaking the CLI or JSON schema.
-
-## CLI surface (v1)
+## Module layout
 
 ```
-cka analyze SONG            # file path or URL; pretty rich output: key card + chord timeline + progression
-  --json PATH | --json -    # machine-readable result
-  --lab PATH                # MIREX-style chord annotation (start\tend\tlabel)
-  --start SEC --duration SEC
-  --triads-only             # restrict vocabulary to maj/min/dim/aug
-  --engine template
-cka web                     # launch the local web UI (default http://127.0.0.1:8321); requires cka[web]
-  --port PORT --host HOST
+src/chord_key_analyzer/
+  cli.py            click CLI: `cka analyze`, `cka web`
+  ingest.py         soundfile/ffmpeg decode, yt-dlp URL fetch (lazy import)
+  features.py       tuning, CQT chroma, HPSS, beat tracking
+  key.py            KS + Temperley profiles, chord evidence, modulation scan
+  chords.py         ChordEngine protocol; TemplateHMMEngine (templates + Viterbi)
+  progression.py    Roman numerals, loop detection
+  pipeline.py       analyze_audio / analyze_source — the one shared code path
+  output.py         rich rendering, JSON export, MIREX .lab export
+  models.py         dataclasses + JSON schema
+  web.py            FastAPI app: POST /analyze, GET /jobs/{id}
+  web_static/index.html
+tests/              fixtures.py (numpy-synthesised audio) + per-module tests
 ```
 
-### Web UI (minimal, local-only)
-- `cka web` starts uvicorn bound to 127.0.0.1 only (never 0.0.0.0 by default — this is a local tool).
-- One static page (`web_static/index.html`, vanilla JS + inline CSS, no build step): drop an audio file or paste a URL → `POST /analyze` (multipart upload or `{"url": ...}`) → renders the same JSON the CLI emits as a key card, an SVG chord timeline with time axis, the Roman-numeral progression, and a "download JSON / .lab" link.
-- The endpoint calls the exact same pipeline function the CLI uses (`analyze_audio(...) -> AnalysisResult`) — one code path, two frontends. Long analyses report progress via simple polling (`GET /jobs/{id}`); keep it to an in-memory job dict, no database, no queue.
+## Pipeline
 
-JSON schema (stable, versioned via `"schema": 1`): `{file, duration, key: {tonic, mode, confidence, alternatives[], modulations[]}, chords: [{start, end, label, confidence}], progression: {roman[], main_loop{labels, roman, repeats}}, meta: {engine, version}}`.
-
-## Milestones (implement in order; each ends green on CI)
-
-1. **Scaffold**: pyproject, package skeleton, click CLI stub, ruff + pytest, GitHub Actions CI, README (with the source-support matrix incl. the DRM explanation), MIT license.
-2. **Ingest**: ffmpeg decode + probe (duration), ffmpeg-missing detection; yt-dlp URL fetch behind `[url]` extra with lazy import and a clear error when absent.
-3. **Features**: tuning, chroma, beat-sync with rubato fallback.
-4. **Key detection** + tests against synthesized fixtures (render scales/chord beds in known keys; assert detected key and that relative-major/minor confusion is within tolerance).
-5. **Chord detection** (templates + Viterbi) + fixture tests (render `C F G C`, `Am F C G`, a 7th-chord jazz turnaround; assert segment labels and boundary tolerance ±0.25 s).
-6. **Progression analysis** + tests.
-7. **Output layer**: rich rendering, JSON, .lab; snapshot-test the JSON.
-8. **Web UI**: `web.py` + `web_static/index.html` behind `[web]`; FastAPI TestClient tests for `POST /analyze` (fixture WAV upload → expected JSON) and the missing-extra error path.
-9. **End-to-end + docs**: `cka analyze` on a fixture WAV in CI; README usage examples (CLI + web); accuracy-expectations section (triadic rock/pop strong; dense jazz voicings and fast classical harmony will be approximate); optional offline eval script that scores against Isophonics/Beatles `.lab` annotations *if the user has downloaded them locally* (never fetched automatically).
-
-Explicitly deferred (Phase 2 candidates, not in this build): neural engine (`crema`) behind `[deep]`, inversion/bass detection, section-aware segmentation, waveform rendering in the web UI.
-
-## Hand-off notes for the implementing session
-
-This document is the source of truth for the build. Work through the milestones in order — each one should land with its tests green on CI before starting the next. The four "Decisions" above were confirmed with the user; don't relitigate them, but do surface anything discovered mid-build that would change one.
+1. **Decode** to mono float32 at 22050 Hz.
+2. **Tuning correction** (`librosa.estimate_tuning`).
+3. **HPSS**, then **CQT chroma** at 36 bins/octave folded to 12, median filtered.
+4. **Beat tracking**, with a reliability check for rubato material.
+5. **Chords**: 12 roots × 7 qualities + `N`, scored against harmonically-weighted
+   templates, Viterbi-decoded with a self-transition bonus, merged into segments.
+6. **Key**: KS + Temperley profile correlation over the pooled chroma, combined with
+   chord evidence; sliding-window scan for modulations.
+7. **Progression**: Roman numerals, collapse repeats, find the dominant loop by n-gram
+   coverage.
 
 ## Verification
 
-- **Unit/integration**: `pytest` — all fixture-based tests above; fixtures are synthesized in-test with numpy (no audio files committed, no network).
-- **End-to-end**: `cka analyze tests/out/fixture.wav --json -` returns the known key (`C major`) and the rendered progression; run in CI. Web path: FastAPI TestClient posts the same fixture and asserts the same JSON.
-- **Real-world spot checks** (manual, post-build): a Beatport-tagged electronic track (compare detected key to Beatport's), a canonical rock song (e.g. a I–V–vi–IV pop track), and a classical piece for the rubato fallback path.
+- Fixtures are synthesised in-test with numpy — no audio files committed, no network.
+- Key detection is checked across all 12 major and all 12 minor keys.
+- Chord decoding is checked on pop, minor, blues, jazz-seventh, and dim/aug progressions,
+  with a ±0.25 s boundary tolerance.
+- The web path posts the same fixture through `TestClient` and must agree with the CLI.
+- CI runs ruff + pytest on push and PR.
+
+---
+
+## Changes made during implementation
+
+Everything below is a deliberate departure from the plan above, made because the
+implementation surfaced something the plan had not accounted for.
+
+### 1. Chord decoding is frame-level, not beat-synchronous
+
+The plan called for beat-synchronous chroma aggregation before chord decoding. That was
+dropped in favour of decoding at frame resolution (~93 ms), because it couples the chord
+track to beat-tracker quality precisely where beat tracking is least trustworthy — the
+rubato and classical material the plan itself flagged as a fallback case. Frame-level
+decoding also keeps boundaries comfortably inside the ±0.25 s tolerance, which one beat at
+most tempos exceeds on its own.
+
+Beats are still tracked, reported, and used — but only as an optional post-hoc snap of
+chord boundaries, and only when the grid earns it (see below).
+
+### 2. Beat snapping requires prior agreement with the grid
+
+Snapping boundaries to the nearest beat made results measurably *worse* on the first
+fixture: maximum boundary error went from 0.081 s to 0.204 s. The beat grid was perfectly
+steady and still wrong — locked to a subdivision and offset from the real chord changes.
+Steadiness is not correctness, so the original "is the grid steady?" check was not enough.
+
+Snapping is now applied only when the decoded boundaries *already* agree with the grid
+(median deviation under 20% of a beat). It can refine an alignment that is already right;
+it can no longer invent one.
+
+### 3. Augmented triads are deduplicated
+
+`C:aug`, `E:aug` and `G#:aug` are the same pitch-class set. Chroma has no bass
+information to distinguish them, so keeping all three only split probability mass between
+identical templates and diluted the confidence of every neighbouring chord. Only the
+lowest-root spelling is kept, taking the state count from 85 to **77**.
+
+### 4. Chord-tone weighting, without which sevenths collapse to triads
+
+The plan's binary-with-harmonic-weighting templates weighted every chord tone equally.
+That systematically mislabelled `Dm7` as `D:min` and `Cmaj7` as `C:maj`: a four-note
+template spreads its unit norm over more bins than a triad's, so root-heavy audio matches
+the triad better even when the seventh is plainly sounding.
+
+Chord tones are now weighted by role — root 1.0, fifth 0.8, third 0.75, seventh 0.5 —
+which reflects how present each voice actually is in a recording. All six test
+progressions pass across a broad band of settings.
+
+### 5. Key detection uses chord evidence, and the pipeline order is reversed
+
+This was the largest change. Profile correlation alone got **0 of 12 minor keys right** —
+every single one was reported as its relative major. That is not tuning noise: a key and
+its relative share an identical pitch-class content, so no pitch-class histogram can
+separate them, whichever profile set is used.
+
+What separates them is which chord acts as home, and the chord track already shows that
+unambiguously. So the pipeline now decodes **chords before key**, and the key stage adds a
+chord-evidence term: diatonic membership weighted by sounding time, plus credit for time
+spent on the tonic triad and for the piece starting or ending there. Chord decoding needs
+no key, so there is no circularity.
+
+Both score vectors are standardised across the 24 candidate keys before being combined —
+without that, the mixing weight silently encodes a unit conversion rather than a relative
+importance. Result: **36 of 36** key fixtures correct (12 major, 24 minor across two
+progression shapes).
+
+`detect_key()` still works without chords, and still cannot resolve relative
+major/minor in that mode. That is documented rather than hidden.
+
+### 6. The modulation scan is Viterbi-smoothed
+
+Per-window argmax flickered between a key and its relative in regions where the key was in
+fact perfectly steady, which broke the "N consecutive identical windows" rule and hid real
+modulations. The local key is a piecewise-constant latent observed through noisy
+overlapping windows — the same problem shape as chord decoding — so it is now decoded with
+the same `viterbi_decode`, with a much stickier self-transition. The "first/last chord is
+the tonic" bonus is also disabled for windows, where the edges fall wherever the hop puts
+them rather than at structural boundaries.
+
+### 7. soundfile-first decoding
+
+The plan specified ffmpeg for all decoding. Reading WAV/FLAC/OGG through libsndfile first
+and falling back to the ffmpeg pipe means the entire test suite — and the common case of
+analysing a WAV — needs no external binary. ffmpeg remains required for mp3/m4a and URLs.
+
+### 8. FastAPI imports live at module scope
+
+Importing FastAPI's symbols inside `create_app()` left pydantic unable to resolve
+`UploadFile | None`, and every route returned 422. FastAPI resolves endpoint annotations
+against module globals, so the import is now module-level behind a `FASTAPI_AVAILABLE`
+flag — the module still imports without the `[web]` extra, and `create_app()` raises a
+helpful error instead.
+
+---
+
+## Deferred (phase 2)
+
+- Neural chord engine (crema) behind `[deep]`
+- Inversion and bass-note detection
+- Section-aware segmentation (verse/chorus)
+- Waveform rendering in the web UI
+- Sus, 6th, 9th and altered chord qualities
+- An offline eval script scoring against Isophonics/Beatles `.lab` annotations, if the
+  user has downloaded them locally — never fetched automatically
