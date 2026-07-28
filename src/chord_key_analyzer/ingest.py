@@ -18,6 +18,8 @@ import json
 import shutil
 import subprocess
 import tempfile
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -182,6 +184,10 @@ def download_url(url: str, dest_dir: str | Path | None = None) -> Path:
 
     yt-dlp is an optional dependency (``pip install 'chord-key-analyzer[url]'``)
     and is imported lazily so the base install never pays for it.
+
+    When ``dest_dir`` is ``None`` a temporary directory is created and **the
+    caller owns it** — nothing here deletes it.  Prefer :func:`downloaded_media`,
+    which ties that directory's lifetime to a ``with`` block.
     """
     try:
         from yt_dlp import YoutubeDL
@@ -230,6 +236,21 @@ def download_url(url: str, dest_dir: str | Path | None = None) -> Path:
     return downloaded[0]
 
 
+@contextmanager
+def downloaded_media(url: str) -> Iterator[Path]:
+    """Download ``url`` into a temporary directory removed when the block exits.
+
+    :func:`load_audio_file` decodes fully into memory, so the download is only
+    needed for the duration of that call.  Cleanup runs on the failure path too,
+    which is what keeps a bad URL from leaving a stray ``cka-*`` directory behind.
+    """
+    dest = Path(tempfile.mkdtemp(prefix="cka-"))
+    try:
+        yield download_url(url, dest_dir=dest)
+    finally:
+        shutil.rmtree(dest, ignore_errors=True)
+
+
 def resolve_source(
     target: str,
     sr: int = TARGET_SR,
@@ -238,8 +259,8 @@ def resolve_source(
 ) -> LoadedAudio:
     """Load ``target`` — a local path or a yt-dlp-supported URL — into memory."""
     if is_url(target):
-        path = download_url(target)
-        samples = load_audio_file(path, sr=sr, offset=offset, duration=duration)
+        with downloaded_media(target) as path:
+            samples = load_audio_file(path, sr=sr, offset=offset, duration=duration)
         return LoadedAudio(samples=samples, sr=sr, source=target)
 
     samples = load_audio_file(target, sr=sr, offset=offset, duration=duration)
