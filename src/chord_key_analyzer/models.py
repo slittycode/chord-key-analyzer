@@ -32,6 +32,23 @@ TRIAD_QUALITIES = ("maj", "min", "dim", "aug")
 #: Label for the "no chord" state (silence, percussion, ambiguous texture).
 NO_CHORD = "N"
 
+#: Interval above the root (in semitones) -> the MIREX degree that names it, for
+#: slash chords.  0 has no entry on purpose: a bass on the root is root position,
+#: which is written without a slash at all.
+BASS_DEGREES = {
+    1: "b2",
+    2: "2",
+    3: "b3",
+    4: "3",
+    5: "4",
+    6: "b5",
+    7: "5",
+    8: "b6",
+    9: "6",
+    10: "b7",
+    11: "7",
+}
+
 
 def chord_label(root: int, quality: str) -> str:
     """Build a chord label such as ``C:maj`` from a pitch class and quality."""
@@ -115,12 +132,25 @@ class KeyEstimate:
 
 @dataclass(frozen=True)
 class ChordSegment:
-    """A single chord occupying ``[start, end)`` seconds of the track."""
+    """A single chord occupying ``[start, end)`` seconds of the track.
+
+    ``label`` never carries the bass.  Everything that reads a label — the
+    parser, the Roman-numeral writer, the key evidence term, the web timeline —
+    is about the chord itself, and a slash in there would mean teaching all of
+    them to strip it.  The bass lives in its own field, and the two are combined
+    only where a combined form is wanted (see :attr:`mirex_label` and
+    :attr:`display_label`).
+    """
 
     start: float
     end: float
     label: str
     confidence: float = 0.0
+    #: Pitch class of the sounding bass note, when it is a chord tone other than
+    #: the root and the low end was clear enough to be sure.  ``None`` otherwise
+    #: — including for root-position chords, which need no slash.  Last, and with
+    #: a default, so existing positional constructors keep working.
+    bass: str | None = None
 
     @property
     def duration(self) -> float:
@@ -130,12 +160,43 @@ class ChordSegment:
     def is_no_chord(self) -> bool:
         return self.label == NO_CHORD
 
+    @property
+    def bass_degree(self) -> str | None:
+        """The bass as a degree above the root (``"3"``, ``"b7"``), or ``None``."""
+        if self.bass is None:
+            return None
+        parsed = parse_chord_label(self.label)
+        if parsed is None:
+            return None
+        try:
+            bass_pc = PITCH_CLASSES.index(self.bass)
+        except ValueError:
+            return None
+        return BASS_DEGREES.get((bass_pc - parsed[0]) % 12)
+
+    @property
+    def mirex_label(self) -> str:
+        """Label for a ``.lab`` file, where a slash bass is written as a *degree*.
+
+        ``C:maj/E`` is not a label mir_eval will parse; ``C:maj/3`` is.  Degrees
+        are what the annotation format speaks, so exports use this form and
+        round-trip cleanly through mir_eval.
+        """
+        degree = self.bass_degree
+        return self.label if degree is None else f"{self.label}/{degree}"
+
+    @property
+    def display_label(self) -> str:
+        """Label as a musician writes it, ``C:maj/E`` — for humans, not files."""
+        return self.label if self.bass is None else f"{self.label}/{self.bass}"
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "start": round(self.start, 3),
             "end": round(self.end, 3),
             "label": self.label,
             "confidence": round(self.confidence, 4),
+            "bass": self.bass,
         }
 
 

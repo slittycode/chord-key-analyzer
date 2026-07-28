@@ -61,6 +61,40 @@ def test_every_vocabulary_label_parses_in_mir_eval():
     mir_eval.chord.encode("N")
 
 
+def test_every_slash_label_parses_in_mir_eval():
+    """Same proof, extended over every chord tone a slash can name."""
+    import mir_eval
+
+    from chord_key_analyzer.models import CHORD_QUALITIES, ChordSegment, chord_label
+
+    for root in range(12):
+        for quality, intervals in CHORD_QUALITIES.items():
+            for interval in intervals:
+                bass = fx.PITCH_CLASSES[(root + interval) % 12]
+                segment = ChordSegment(0.0, 1.0, chord_label(root, quality), 1.0, bass=bass)
+                mir_eval.chord.encode(segment.mirex_label)
+
+
+def test_a_slash_reference_still_scores_the_plain_estimate(tmp_path):
+    """Bass is not part of what root/majmin measure, so a reference written with
+    inversions must not penalise an analyzer that reports the chord alone."""
+    audio = fx.render_progression(fx.POP_LOOP_C, chord_duration=2.0, repeats=3)
+    fx.write_wav(tmp_path / "pop.wav", audio)
+
+    lines, time = [], 0.0
+    for _ in range(3):
+        for label in ["C:maj/3", "G:maj/5", "A:min/b3", "F:maj/3"]:
+            lines.append(f"{time:.6f}\t{time + 2.0:.6f}\t{label}")
+            time += 2.0
+    (tmp_path / "pop.lab").write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+    pairs, _ = discover_pairs(tmp_path)
+    evaluation = evaluate_track(pairs[0])
+    assert evaluation.ok, evaluation.error
+    assert evaluation.chord_scores["root"] >= 0.75, evaluation.chord_scores
+    assert evaluation.chord_scores["majmin"] >= 0.75, evaluation.chord_scores
+
+
 def test_evaluate_track_scores_the_pop_fixture(pop_dataset):
     """End-to-end: a known rendering against hand-written truth must score high."""
     pairs, orphans = discover_pairs(pop_dataset)

@@ -69,8 +69,26 @@ def render_chord(
     sr: int = SR,
     octave: int = 4,
     with_bass: bool = True,
+    bass_interval: int | None = None,
+    bass_octave: int = 2,
 ) -> np.ndarray:
-    """A single chord: close-position voicing plus an optional octave-down root."""
+    """A single chord: close-position voicing plus an optional low bass note.
+
+    ``bass_interval`` (semitones above the root) puts the bass on a chosen chord
+    tone down in ``bass_octave``, which is how an inversion is rendered: a C
+    major triad over E is ``render_chord("C", "maj", d, bass_interval=4)``.
+
+    It sounds at the same level as each note of the voicing, not louder.  The
+    main chroma spans the whole spectrum, low register included, so a bass hot
+    enough to dominate it moves the *chord* decode too: at 1.25x the voicing
+    level a rendered C:maj/E starts decoding as A:min7.  That is a real property
+    of a chroma-only recogniser rather than a fixture artefact, but a fixture
+    that triggers it is testing the wrong thing.  Down in ``bass_octave`` this
+    note is alone anyway, which is all the low-register chroma needs.
+
+    Without ``bass_interval`` the bass just doubles the root an octave down, as
+    before.
+    """
     root_midi = 12 * (octave + 1) + note_name_to_pc(root)
     intervals = QUALITY_INTERVALS[quality]
 
@@ -78,7 +96,10 @@ def render_chord(
     audio = np.zeros(n, dtype=np.float64)
     for interval in intervals:
         audio += render_note(root_midi + interval, duration, sr, amplitude=0.8)
-    if with_bass:
+    if bass_interval is not None:
+        bass_midi = 12 * (bass_octave + 1) + note_name_to_pc(root) + bass_interval
+        audio += render_note(bass_midi, duration, sr, amplitude=0.8)
+    elif with_bass:
         audio += render_note(root_midi - 12, duration, sr, amplitude=1.0)
 
     peak = np.max(np.abs(audio))
@@ -88,7 +109,7 @@ def render_chord(
 
 
 def render_progression(
-    chords: list[tuple[str, str]],
+    chords: list[tuple[str, str]] | list[tuple[str, str, int]],
     chord_duration: float = 2.0,
     repeats: int = 1,
     sr: int = SR,
@@ -96,10 +117,21 @@ def render_progression(
     noise: float = 0.002,
     seed: int = 0,
 ) -> np.ndarray:
-    """Render a chord sequence back to back, optionally repeated."""
+    """Render a chord sequence back to back, optionally repeated.
+
+    Entries are ``(root, quality)``, or ``(root, quality, bass_interval)`` to
+    render that chord as an inversion.
+    """
     blocks = [
-        render_chord(root, quality, chord_duration, sr=sr, octave=octave)
-        for root, quality in chords
+        render_chord(
+            chord[0],
+            chord[1],
+            chord_duration,
+            sr=sr,
+            octave=octave,
+            bass_interval=chord[2] if len(chord) > 2 else None,
+        )
+        for chord in chords
     ] * repeats
     audio = np.concatenate(blocks) if blocks else np.zeros(0)
 

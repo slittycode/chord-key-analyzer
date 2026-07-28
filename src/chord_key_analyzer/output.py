@@ -38,9 +38,13 @@ def write_json(result: AnalysisResult, destination: str) -> None:
 
 
 def to_lab(result: AnalysisResult) -> str:
-    """MIREX-style chord annotation: ``start<TAB>end<TAB>label`` per line."""
+    """MIREX-style chord annotation: ``start<TAB>end<TAB>label`` per line.
+
+    Labels are written in the ``.lab`` dialect, so a detected bass appears as a
+    degree slash (``C:maj/3``) — the spelling mir_eval parses.
+    """
     return "".join(
-        f"{c.start:.3f}\t{c.end:.3f}\t{c.label}\n" for c in result.chords
+        f"{c.start:.3f}\t{c.end:.3f}\t{c.mirex_label}\n" for c in result.chords
     )
 
 
@@ -108,7 +112,7 @@ def _chord_table(result: AnalysisResult) -> Table:
         table.add_row(
             format_time(chord.start),
             format_time(chord.end),
-            chord.label,
+            chord.display_label,
             numeral,
             Text(f"{chord.confidence:.0%}", style=_confidence_style(chord.confidence)),
         )

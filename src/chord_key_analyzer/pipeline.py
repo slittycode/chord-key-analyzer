@@ -8,7 +8,7 @@ from pathlib import Path
 import numpy as np
 
 from . import __version__
-from .chords import get_engine
+from .chords import detect_inversions, get_engine
 from .features import DEFAULT_HOP, extract_features
 from .ingest import TARGET_SR, resolve_source
 from .key import detect_key
@@ -49,6 +49,9 @@ def analyze_audio(
     # key, so there is no circularity here.
     progress("chords", 0.5)
     chords = chord_engine.analyze(features)
+    # After the engine rather than inside it: the merge and snap helpers rebuild
+    # segments from their neighbours and would drop a bass assigned earlier.
+    chords = detect_inversions(chords, features)
 
     progress("key", 0.75)
     key = detect_key(features, scan_modulations=scan_modulations, chords=chords)

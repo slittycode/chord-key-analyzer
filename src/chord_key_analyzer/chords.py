@@ -9,7 +9,7 @@ smooths the result with a Viterbi decode.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Protocol
 
 import numpy as np
@@ -18,9 +18,11 @@ from .features import Features
 from .models import (
     CHORD_QUALITIES,
     NO_CHORD,
+    PITCH_CLASSES,
     TRIAD_QUALITIES,
     ChordSegment,
     chord_label,
+    parse_chord_label,
 )
 
 #: Harmonic series weights applied when building templates.  Partial *k* of a
@@ -378,6 +380,88 @@ class TemplateHMMEngine:
             return segments
 
         return snap_to_beats(segments, beat_times, tolerance=beat_period / 2.0)
+
+
+#: A frame's bass counts as voiced when its strongest pitch class holds at least
+#: this share of the frame's total bass energy.  A frame with nothing in
+#: particular happening down there spreads evenly and gives every class about
+#: 1/12 (0.083), so this asks for a genuinely dominant note rather than whichever
+#: bin won a coin toss in a murky low end.
+BASS_SALIENCE = 0.30
+
+#: And the voiced frames of a segment must agree on that pitch class this often.
+#: Below it the bass is moving — a walking line, a fill, a passing tone — and no
+#: single note describes the segment.
+BASS_AGREEMENT = 0.6
+
+
+def detect_inversions(
+    segments: list[ChordSegment], features: Features
+) -> list[ChordSegment]:
+    """Attach the sounding bass note to each segment, where there plainly is one.
+
+    Run this **after** every merge and snap helper.  Those rebuild
+    ``ChordSegment``s field by field from their neighbours and would silently
+    drop a bass assigned earlier; the pipeline therefore calls this once, on the
+    engine's finished output.
+
+    Three conditions have to hold before a bass is reported, and each exists to
+    make the failure mode "no slash" rather than "a wrong slash":
+
+    * over half the segment's frames must have a clearly voiced bass
+      (:data:`BASS_SALIENCE`),
+    * those frames must agree on one pitch class (:data:`BASS_AGREEMENT`),
+    * and that pitch class must be a chord tone other than the root.
+
+    The last one is the strictest.  A low note outside the chord is a passing
+    bass, a pedal, or simply a detector error, and none of those is worth
+    printing a confident ``/b6`` over.
+    """
+    if not segments or features.bass_chroma.size == 0:
+        return segments
+
+    bass_chroma = features.bass_chroma
+    energy = bass_chroma.sum(axis=0)
+    salience = bass_chroma.max(axis=0) / np.maximum(energy, 1e-9)
+    voiced = (salience >= BASS_SALIENCE) & (~features.silent)
+    strongest = bass_chroma.argmax(axis=0)
+
+    result: list[ChordSegment] = []
+    for segment in segments:
+        bass = _segment_bass(segment, features.times, voiced, strongest)
+        result.append(segment if bass is None else replace(segment, bass=bass))
+    return result
+
+
+def _segment_bass(
+    segment: ChordSegment,
+    times: np.ndarray,
+    voiced: np.ndarray,
+    strongest: np.ndarray,
+) -> str | None:
+    """The bass pitch-class name for one segment, or ``None`` — see the caller."""
+    parsed = parse_chord_label(segment.label)
+    if parsed is None:
+        return None
+    root, quality = parsed
+
+    in_segment = (times >= segment.start) & (times < segment.end)
+    total = int(in_segment.sum())
+    usable = in_segment & voiced
+    n_usable = int(usable.sum())
+    if not total or n_usable * 2 < total:
+        return None
+
+    # Every frame spans one hop, so counting frames *is* weighting by duration.
+    counts = np.bincount(strongest[usable], minlength=12)
+    candidate = int(counts.argmax())
+    if counts[candidate] / float(n_usable) < BASS_AGREEMENT:
+        return None
+
+    interval = (candidate - root) % 12
+    if not interval or interval not in CHORD_QUALITIES.get(quality, ()):
+        return None
+    return PITCH_CLASSES[candidate]
 
 
 def get_engine(name: str, triads_only: bool = False, beat_snap: bool = True) -> ChordEngine:

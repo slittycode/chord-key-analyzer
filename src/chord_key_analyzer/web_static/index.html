@@ -155,6 +155,27 @@ const PALETTE = [
   "#fb923c", "#38bdf8", "#e879f9", "#4ade80", "#facc15", "#f87171"
 ];
 
+const ROOTS = ["C","C#","D","D#","E","F","F#","G","G#","A","A#","B"];
+
+// Mirrors BASS_DEGREES in models.py: a `.lab` file names the bass by degree
+// above the root, not by note name, because that is the spelling mir_eval reads.
+const BASS_DEGREES = ["", "b2", "2", "b3", "3", "4", "b5", "5", "b6", "6", "b7", "7"];
+
+// `C:maj` + bass `E` -> `C:maj/E`, for people.
+function displayLabel(chord) {
+  return chord.bass ? `${chord.label}/${chord.bass}` : chord.label;
+}
+
+// `C:maj` + bass `E` -> `C:maj/3`, for files.
+function mirexLabel(chord) {
+  if (!chord.bass) return chord.label;
+  const root = ROOTS.indexOf(chord.label.split(":")[0]);
+  const bass = ROOTS.indexOf(chord.bass);
+  if (root < 0 || bass < 0) return chord.label;
+  const degree = BASS_DEGREES[(bass - root + 12) % 12];
+  return degree ? `${chord.label}/${degree}` : chord.label;
+}
+
 function setStatus(message, isError) {
   statusLine.textContent = message || "";
   statusLine.classList.toggle("error", Boolean(isError));
@@ -303,7 +324,7 @@ function render(result) {
     const row = document.createElement("tr");
     for (const [value, cls] of [
       [formatTime(chord.start), "num"], [formatTime(chord.end), "num"],
-      [chord.label, ""], [numeral, ""], [`${Math.round(chord.confidence * 100)}%`, "num"]
+      [displayLabel(chord), ""], [numeral, ""], [`${Math.round(chord.confidence * 100)}%`, "num"]
     ]) {
       const cell = document.createElement("td");
       cell.className = cls;
@@ -316,8 +337,7 @@ function render(result) {
 
 function colourFor(label) {
   if (label === "N") return "var(--line)";
-  const roots = ["C","C#","D","D#","E","F","F#","G","G#","A","A#","B"];
-  return PALETTE[roots.indexOf(label.split(":")[0]) % PALETTE.length] || "#888";
+  return PALETTE[ROOTS.indexOf(label.split(":")[0]) % PALETTE.length] || "#888";
 }
 
 function drawTimeline(result) {
@@ -346,7 +366,7 @@ function drawTimeline(result) {
       x, y: laneTop, width: w, height: laneHeight, rx: 3,
       fill: colourFor(chord.label),
       opacity: chord.label === "N" ? 0.35 : 0.45 + 0.55 * chord.confidence
-    })).appendChild(make("title", {}, `${chord.label}  ${formatTime(chord.start)}–${formatTime(chord.end)}`));
+    })).appendChild(make("title", {}, `${displayLabel(chord)}  ${formatTime(chord.start)}–${formatTime(chord.end)}`));
 
     if (w > 26 && chord.label !== "N") {
       svg.appendChild(make("text", {
@@ -387,7 +407,7 @@ $("dl-json").addEventListener("click", () => {
 });
 $("dl-lab").addEventListener("click", () => {
   if (!lastResult) return;
-  const lines = lastResult.chords.map((c) => `${c.start.toFixed(3)}\t${c.end.toFixed(3)}\t${c.label}`);
+  const lines = lastResult.chords.map((c) => `${c.start.toFixed(3)}\t${c.end.toFixed(3)}\t${mirexLabel(c)}`);
   download("analysis.lab", lines.join("\n") + "\n", "text/plain");
 });
 

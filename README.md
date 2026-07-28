@@ -181,6 +181,33 @@ Augmented triads repeat every four semitones, so `C:aug`, `E:aug` and `G#:aug` a
 and the same pitch-class set. Chroma carries no bass information to tell them apart, so
 only the lowest-root spelling is a decoder state.
 
+### Inversions
+
+A second CQT chroma is computed over the bass register alone (three octaves up from C1).
+Where one pitch class clearly dominates a segment's low end, and that note is a chord tone
+other than the root, it is reported as the bass.
+
+The bass is a separate field, not part of the label. `label` stays `"C:maj"` and `bass`
+carries `"E"`, so every existing consumer of a label keeps working unchanged. The two are
+combined only where a combined form is wanted:
+
+| Where | Form | Why |
+| --- | --- | --- |
+| JSON `chords[].bass` | `"E"` | a note name is what a consumer wants |
+| `.lab` export | `C:maj/3` | MIREX names the bass by *degree*; `C:maj/E` is not a label mir_eval parses |
+| Terminal and web | `C:maj/E` | how a musician writes it |
+
+Three conditions must all hold before a bass is reported: over half the segment's frames
+carry a clearly dominant low note, those frames agree on which one, and it is a chord tone
+other than the root. Each exists to make the failure mode "no slash" rather than "a wrong
+slash" — a low note outside the chord is a passing bass or a detector error, and neither is
+worth a confident `/b6`. Expect real recordings to fail these more often than clean studio
+material does.
+
+Note the limit this does *not* lift: the chord's **root** is still decided by chroma alone.
+A first-inversion C major and an A minor seventh share three pitch classes, and adding bass
+information to the reporting does not change which one the template decoder picks.
+
 ## Accuracy expectations
 
 This is a chroma-template system, and it is honest about what that means:
@@ -192,8 +219,11 @@ This is a chroma-template system, and it is honest about what that means:
 - **Approximate**: fast classical harmony, heavy chromaticism, and rubato playing where
   beat tracking gives up (the pipeline detects this and falls back rather than trusting a
   bad grid).
-- **Not modelled**: inversions and bass notes, suspensions, 6ths, 9ths and other
-  extensions, key changes shorter than about 30 seconds.
+- **Partly modelled**: inversions. The sounding bass note is detected and reported when
+  the low end is unambiguous (see [Inversions](#inversions)), but the chord's root is
+  still chosen from chroma alone.
+- **Not modelled**: suspensions, 6ths, 9ths and other extensions, key changes shorter
+  than about 30 seconds.
 
 Confidence values are real signals, not decoration — treat anything below ~0.4 as the
 analyzer telling you it is unsure. Chord confidences are posterior probabilities across
@@ -266,6 +296,10 @@ an unimplemented engine fails loudly rather than silently falling back.
 
 Versioned via `"schema": 1`.
 
+**Additive-change contract.** New keys may be added within a schema version; keys are
+never removed or repurposed without the version changing. Consumers must ignore keys they
+do not recognise.
+
 ```json
 {
   "schema": 1,
@@ -278,7 +312,8 @@ Versioned via `"schema": 1`.
     "modulations": [{"start": 25.0, "end": 60.0, "tonic": "E", "mode": "major",
                      "confidence": 0.71}]
   },
-  "chords": [{"start": 0.0, "end": 2.04, "label": "C:maj", "confidence": 0.41}],
+  "chords": [{"start": 0.0, "end": 2.04, "label": "C:maj", "confidence": 0.41,
+              "bass": null}],
   "progression": {
     "roman": ["I", "V", "vi", "IV"],
     "labels": ["C:maj", "G:maj", "A:min", "F:maj"],

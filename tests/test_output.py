@@ -35,7 +35,7 @@ def sample_result():
         ),
         chords=[
             ChordSegment(0.0, 2.0, "C:maj", 0.9),
-            ChordSegment(2.0, 4.0, "G:maj", 0.8),
+            ChordSegment(2.0, 4.0, "G:maj", 0.8, bass="B"),
             ChordSegment(4.0, 6.0, "N", 0.3),
             ChordSegment(6.0, 8.0, "F:maj", 0.7),
         ],
@@ -80,7 +80,7 @@ def test_json_top_level_shape_is_stable():
         "alternatives",
         "modulations",
     }
-    assert set(payload["chords"][0]) == {"start", "end", "label", "confidence"}
+    assert set(payload["chords"][0]) == {"start", "end", "label", "confidence", "bass"}
     assert set(payload["progression"]) == {"roman", "labels", "main_loop"}
     assert set(payload["progression"]["main_loop"]) == {
         "labels",
@@ -122,6 +122,24 @@ def test_lab_format_is_mirex_style():
     lines = to_lab(sample_result()).strip().split("\n")
     assert lines[0] == "0.000\t2.000\tC:maj"
     assert len(lines) == 4
+
+
+def test_lab_writes_a_bass_as_a_degree_slash():
+    """`G:maj/B` is not a label mir_eval parses; `G:maj/3` is."""
+    assert "\tG:maj/3\n" in to_lab(sample_result())
+
+
+def test_json_carries_the_bass_as_a_note_name():
+    """The JSON field is for consumers, who want the note, not the degree."""
+    payload = json.loads(to_json(sample_result()))
+    assert [c["bass"] for c in payload["chords"]] == [None, "B", None, None]
+    assert payload["chords"][1]["label"] == "G:maj", "the label itself stays plain"
+
+
+def test_render_shows_a_slash_chord_by_note_name():
+    console = Console(record=True, width=100)
+    render(sample_result(), console=console)
+    assert "G:maj/B" in console.export_text()
 
 
 def test_lab_keeps_the_no_chord_state():
