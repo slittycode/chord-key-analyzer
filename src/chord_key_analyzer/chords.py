@@ -464,6 +464,44 @@ def _segment_bass(
     return PITCH_CLASSES[candidate]
 
 
+#: Bass-driven re-spellings, keyed by ``(detected quality, bass degree)`` and
+#: giving ``(new quality, semitones to move the root)``.  The rule lands on a
+#: root-position chord whose root is the sounding bass: `A:min7` over C is
+#: exactly `C:maj6`.
+_RESPELLINGS: dict[tuple[str, str], tuple[str, int]] = {
+    ("min7", "b3"): ("maj6", 3),
+}
+
+
+def respell_with_bass(segments: list[ChordSegment]) -> list[ChordSegment]:
+    """Rename chords whose bass reveals a better spelling of the same notes.
+
+    Some pitch-class sets have two equally good names and no chroma-only decoder
+    can choose between them: `C:maj6` and `A:min7` are the same four notes.  Only
+    one spelling of the pair is a decoder state (see
+    :data:`~chord_key_analyzer.models.RESPELLED_QUALITIES`); when the detected
+    bass says the other one is what is actually sounding, this rewrites it.
+
+    The result is root position by construction — the bass has *become* the root
+    — so the bass field is cleared rather than left to print a slash.  Every
+    other bass result is passed through exactly as
+    :func:`detect_inversions` reported it, which is where the bass comes from and
+    therefore what this has to run after.
+    """
+    result: list[ChordSegment] = []
+    for segment in segments:
+        parsed = parse_chord_label(segment.label)
+        rule = None if parsed is None else _RESPELLINGS.get((parsed[1], segment.bass_degree))
+        if rule is None or parsed is None:
+            result.append(segment)
+            continue
+        quality, shift = rule
+        result.append(
+            replace(segment, label=chord_label(parsed[0] + shift, quality), bass=None)
+        )
+    return result
+
+
 def get_engine(name: str, triads_only: bool = False, beat_snap: bool = True) -> ChordEngine:
     """Resolve an engine name to an instance.
 

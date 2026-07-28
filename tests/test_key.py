@@ -131,6 +131,79 @@ def test_chord_evidence_is_empty_without_chords():
     assert np.all(chord_evidence_scores([]) == 0)
 
 
+#: The hand-written diatonic tables the derivation replaced, frozen verbatim.
+#: Reproducing these exactly is the whole licence for deriving them instead.
+LEGACY_MAJOR_DEGREES = [
+    (0, ("maj", "maj7")),
+    (2, ("min", "min7")),
+    (4, ("min", "min7")),
+    (5, ("maj", "maj7")),
+    (7, ("maj", "7")),
+    (9, ("min", "min7")),
+    (11, ("dim",)),
+]
+LEGACY_MINOR_DEGREES = [
+    (0, ("min", "min7")),
+    (2, ("dim",)),
+    (3, ("maj", "maj7")),
+    (5, ("min", "min7")),
+    (7, ("min", "min7", "maj", "7")),
+    (8, ("maj", "maj7")),
+    (10, ("maj", "7")),
+    (11, ("dim",)),
+]
+LEGACY_QUALITIES = frozenset({"maj", "min", "dim", "aug", "maj7", "min7", "7"})
+
+
+@pytest.mark.parametrize(
+    ("mode", "legacy"), [("major", LEGACY_MAJOR_DEGREES), ("minor", LEGACY_MINOR_DEGREES)]
+)
+@pytest.mark.parametrize("tonic", [0, 5, 7, 11])
+def test_derived_diatonic_set_reproduces_the_hand_written_table(mode, legacy, tonic):
+    """Restricted to the original vocabulary, the derivation must agree exactly.
+
+    The minor case is the one that matters: merging natural and harmonic minor
+    into a single eight-note collection derives three chords neither scale
+    contains — iv°, bVI° and bvi — because it lets a natural-minor sixth degree
+    sit under a harmonic-minor leading tone.  Stacking thirds on each scale
+    separately does not.
+    """
+    from chord_key_analyzer.key import _diatonic_chords
+
+    expected = {((tonic + degree) % 12, quality) for degree, qualities in legacy
+                for quality in qualities}
+    derived = {
+        (root, quality)
+        for root, quality in _diatonic_chords(tonic, mode)
+        if quality in LEGACY_QUALITIES
+    }
+    assert derived == expected
+
+
+def test_the_derivation_extends_to_the_new_qualities():
+    """C6, F6 and G6 are all plainly in C major, and now score as in-key.
+
+    The added sixth is not a tertian stack, so it comes from the second half of
+    the derivation: every note of it belongs to the scale.
+    """
+    from chord_key_analyzer.key import _diatonic_chords
+
+    in_c_major = _diatonic_chords(0, "major")
+    assert {(0, "maj6"), (5, "maj6"), (7, "maj6")} <= in_c_major
+    # D6 would need an F#, so it is not in the key.
+    assert (2, "maj6") not in in_c_major
+
+
+def test_augmented_triads_are_never_diatonic():
+    """III+ is a tertian triad of the harmonic minor, but an augmented chord is
+    a chromatic colour wherever it sits — counting it in-key would let whole-tone
+    planing score as tonal."""
+    from chord_key_analyzer.key import _diatonic_chords
+
+    for mode in ("major", "minor"):
+        assert not any(quality == "aug" for _, quality in _diatonic_chords(0, mode))
+
+
 def test_modulation_is_detected_and_localised():
     first = fx.render_progression(build_progression("C", MAJOR_DEGREES), 2.0, 4)
     second = fx.render_progression(build_progression("E", MAJOR_DEGREES), 2.0, 4)

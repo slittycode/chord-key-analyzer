@@ -181,6 +181,25 @@ Augmented triads repeat every four semitones, so `C:aug`, `E:aug` and `G#:aug` a
 and the same pitch-class set. Chroma carries no bass information to tell them apart, so
 only the lowest-root spelling is a decoder state.
 
+`maj6` is an eighth label, and it is never a decoder *state*. `C:maj6` and `A:min7` are
+the same four notes at every root, so no chroma-only decoder can choose between them —
+there is nothing to choose between. Only `min7` is a state; when the detected bass says
+the third is what's sounding underneath, the chord is re-spelled as the sixth on that
+bass (`A:min7` over C becomes `C:maj6`, in root position). This has a real edge: a bass
+loud enough to dominate the chroma re-roots the decode to a plain major triad before the
+rule can apply, which is itself a fair name for those notes.
+
+**Qualities that were measured and rejected.** Adding a quality is gated on evidence, not
+plausibility. Each of these was implemented, measured, and dropped:
+
+| Quality | Why not |
+| --- | --- |
+| `sus4` | Passes every obvious check — collision-free, decodes its own renders at 7 roots out of 7, changes no existing label — and still fails. A suspended template is too good a match for *melody*: two stepwise notes blurred together by the chroma median filter, plus their fifths, **are** a sus chord. A bare scale decodes as a sus4 on every degree, and key detection on melodic material goes with it (A minor read as C major). |
+| `hdim7` | Loses its own renders to the plain diminished triad at all 12 roots — the dim triad's partials already energise the flat seventh's bin. |
+| `dim7` | Symmetric: three distinct pitch-class sets across twelve roots, so the canonical root is arbitrary without a confident bass. |
+| `min6` | Enharmonically `hdim7`, which is not here to be re-spelled from. |
+| `7sus4` | mir_eval does not parse the label, so it would break `.lab` round-trips. |
+
 ### Inversions
 
 A second CQT chroma is computed over the bass register alone (three octaves up from C1).
@@ -222,8 +241,11 @@ This is a chroma-template system, and it is honest about what that means:
 - **Partly modelled**: inversions. The sounding bass note is detected and reported when
   the low end is unambiguous (see [Inversions](#inversions)), but the chord's root is
   still chosen from chroma alone.
-- **Not modelled**: suspensions, 6ths, 9ths and other extensions, key changes shorter
-  than about 30 seconds.
+- **Partly modelled**: 6th chords, which are reported only when the bass resolves them
+  against the minor seventh they share their notes with.
+- **Not modelled**: suspensions, 9ths and other extensions, key changes shorter than
+  about 30 seconds. See [Chord vocabulary](#chord-vocabulary) for why suspensions in
+  particular are held out.
 
 Confidence values are real signals, not decoration — treat anything below ~0.4 as the
 analyzer telling you it is unsure. Chord confidences are posterior probabilities across

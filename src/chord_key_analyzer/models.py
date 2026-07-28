@@ -26,6 +26,33 @@ CHORD_QUALITIES: dict[str, tuple[int, ...]] = {
     "7": (0, 4, 7, 10),
 }
 
+# Four further qualities were measured against this vocabulary and rejected.
+# Each is recorded here so the next person does not have to measure it twice:
+#
+# * ``sus4`` (0,5,7) is collision-free, decodes its own renders 7 roots out of 7,
+#   and changes no label on any existing fixture — and still fails.  A suspended
+#   template is too good a match for melody: two stepwise notes blurred together
+#   by the chroma median filter, plus their fifths, *are* a sus chord, so a bare
+#   scale decodes as a sus4 on every degree and the key evidence collapses with
+#   it (A minor read as C major, D minor as F major).  Held out until the
+#   emission model can tell a sounding fourth from a passing one.
+# * ``hdim7`` (0,3,6,10) is collision-free but loses its own renders to the plain
+#   diminished triad at all 12 roots — the dim triad's partials already energise
+#   the flat seventh's bin.
+# * ``dim7`` (0,3,6,9) is symmetric: three distinct sets across twelve roots, so
+#   the canonical root is arbitrary without a confident bass.
+# * ``min6`` is enharmonically ``hdim7``, which is not here to be re-spelled from.
+
+#: Qualities that exist only as *labels*, never as decoder states, because each
+#: shares its exact pitch-class set with a state: C:maj6 is A:min7 at every root.
+#: A template decoder cannot choose between two identical templates — it would
+#: keep whichever spelling the deduplication happened to see first — so these are
+#: assigned afterwards from the bass, the one thing that does tell them apart.
+#: See :func:`~chord_key_analyzer.chords.respell_with_bass`.
+RESPELLED_QUALITIES: dict[str, tuple[int, ...]] = {
+    "maj6": (0, 4, 7, 9),
+}
+
 #: The subset used when ``--triads-only`` is passed.
 TRIAD_QUALITIES = ("maj", "min", "dim", "aug")
 
