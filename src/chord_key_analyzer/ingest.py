@@ -29,6 +29,11 @@ TARGET_SR = 22050
 
 URL_SCHEMES = ("http://", "https://")
 
+#: Ceiling for a single URL download.  Best-effort: yt-dlp can only enforce this
+#: when the server declares a size up front, so a chunked response of unknown
+#: length still downloads in full.
+MAX_DOWNLOAD_BYTES = 200 * 1024 * 1024
+
 
 class IngestError(RuntimeError):
     """Raised when audio cannot be obtained or decoded."""
@@ -208,6 +213,7 @@ def download_url(url: str, dest_dir: str | Path | None = None) -> Path:
         "quiet": True,
         "no_warnings": True,
         "noprogress": True,
+        "max_filesize": MAX_DOWNLOAD_BYTES,
         "postprocessors": [
             {"key": "FFmpegExtractAudio", "preferredcodec": "wav", "preferredquality": "0"}
         ],
@@ -228,7 +234,10 @@ def download_url(url: str, dest_dir: str | Path | None = None) -> Path:
 
     downloaded = sorted(p for p in dest.iterdir() if p.is_file())
     if not downloaded:
-        raise IngestError(f"yt-dlp reported success but produced no file for {url}")
+        raise IngestError(
+            f"yt-dlp reported success but produced no file for {url} "
+            "(the file may exceed the download size cap)."
+        )
     # The post-processed wav is what we want when both it and the source remain.
     for candidate in downloaded:
         if candidate.suffix.lower() == ".wav":

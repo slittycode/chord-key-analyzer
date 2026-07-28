@@ -123,7 +123,8 @@ def analyze(
 @click.option("--host", default="127.0.0.1", show_default=True, help="Interface to bind.")
 @click.option("--port", default=8321, show_default=True, type=int, help="Port to bind.")
 @click.option("--no-browser", is_flag=True, help="Do not open a browser window.")
-def web(host: str, port: int, no_browser: bool) -> None:
+@click.option("--no-urls", is_flag=True, help="Disable URL ingestion (uploads only).")
+def web(host: str, port: int, no_browser: bool, no_urls: bool) -> None:
     """Launch the local web UI (requires the [web] extra)."""
     try:
         import uvicorn  # noqa: F401
@@ -133,15 +134,17 @@ def web(host: str, port: int, no_browser: bool) -> None:
             "Install them with: pip install 'chord-key-analyzer[web]'"
         ) from exc
 
-    from .web import serve
+    from .web import LOOPBACK_HOSTS, serve
 
-    if host not in {"127.0.0.1", "localhost", "::1"}:
+    if host not in LOOPBACK_HOSTS:
         Console(stderr=True).print(
             f"[yellow]Warning:[/yellow] binding to {host} exposes the analyzer beyond "
-            "this machine. It has no authentication — only do this on a trusted network."
+            "this machine. It has no authentication — only do this on a trusted network. "
+            "URL ingestion is disabled on non-loopback binds."
         )
 
-    serve(host=host, port=port, open_browser=not no_browser)
+    # None lets serve() key the default off the bind; --no-urls forces it off.
+    serve(host=host, port=port, open_browser=not no_browser, allow_urls=False if no_urls else None)
 
 
 if __name__ == "__main__":  # pragma: no cover

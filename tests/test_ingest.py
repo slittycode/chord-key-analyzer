@@ -124,6 +124,31 @@ def test_url_download_returns_the_extracted_wav(monkeypatch, tmp_path):
     assert result.suffix == ".wav"
 
 
+def test_url_download_caps_the_file_size(monkeypatch, tmp_path):
+    """An unbounded download is a denial-of-service on the analyzing machine."""
+    captured: dict[str, object] = {}
+
+    class CapturingYoutubeDL:
+        def __init__(self, options):
+            captured.update(options)
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def extract_info(self, url, download=True):
+            fx.write_wav(tmp_path / "song.wav", fx.render_progression(fx.POP_LOOP_C, 0.5, 1))
+            return {"id": "song", "title": "Song"}
+
+    monkeypatch.setitem(sys.modules, "yt_dlp", types.SimpleNamespace(YoutubeDL=CapturingYoutubeDL))
+    monkeypatch.setattr(ingest, "_require_ffmpeg", lambda reason: "/usr/bin/ffmpeg")
+
+    ingest.download_url("https://example.com/song", dest_dir=tmp_path)
+    assert captured["max_filesize"] == ingest.MAX_DOWNLOAD_BYTES
+
+
 def test_url_download_reports_yt_dlp_failures(monkeypatch, tmp_path):
     class FailingYoutubeDL:
         def __init__(self, options):

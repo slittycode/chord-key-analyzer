@@ -36,6 +36,12 @@ def test_analyze_help_documents_the_flags(runner):
         assert flag in result.output
 
 
+def test_web_help_documents_no_urls(runner):
+    result = runner.invoke(main, ["web", "--help"])
+    assert result.exit_code == 0
+    assert "--no-urls" in result.output
+
+
 def test_analyze_renders_a_report(runner, pop_wav):
     result = runner.invoke(main, ["analyze", str(pop_wav)])
     assert result.exit_code == 0, result.output
