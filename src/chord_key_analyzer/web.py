@@ -119,6 +119,21 @@ class WebExtraMissing(RuntimeError):
         super().__init__(self.MESSAGE)
 
 
+def require_web_extra() -> None:
+    """Raise :class:`WebExtraMissing` unless *both* halves of the extra import.
+
+    One check for the whole extra: probing only uvicorn let a half-installed
+    environment past the door and then crashed on the FastAPI names instead of
+    printing the install hint.
+    """
+    if not FASTAPI_AVAILABLE:
+        raise WebExtraMissing()
+    try:
+        import uvicorn  # noqa: F401
+    except ImportError as exc:
+        raise WebExtraMissing() from exc
+
+
 @dataclass
 class Job:
     """One analysis in flight or completed."""
@@ -294,10 +309,8 @@ def serve(
     machines has no authentication, and URL input is the one feature that makes
     it fetch on a stranger's behalf.
     """
-    try:
-        import uvicorn
-    except ImportError as exc:
-        raise WebExtraMissing() from exc
+    require_web_extra()
+    import uvicorn
 
     if allow_urls is None:
         allow_urls = host in LOOPBACK_HOSTS

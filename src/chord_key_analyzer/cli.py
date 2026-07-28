@@ -126,15 +126,7 @@ def analyze(
 @click.option("--no-urls", is_flag=True, help="Disable URL ingestion (uploads only).")
 def web(host: str, port: int, no_browser: bool, no_urls: bool) -> None:
     """Launch the local web UI (requires the [web] extra)."""
-    try:
-        import uvicorn  # noqa: F401
-    except ImportError as exc:
-        raise SystemExit(
-            "The web UI needs FastAPI and uvicorn, which are not installed.\n"
-            "Install them with: pip install 'chord-key-analyzer[web]'"
-        ) from exc
-
-    from .web import LOOPBACK_HOSTS, serve
+    from .web import LOOPBACK_HOSTS, WebExtraMissing, serve
 
     if host not in LOOPBACK_HOSTS:
         Console(stderr=True).print(
@@ -144,7 +136,15 @@ def web(host: str, port: int, no_browser: bool, no_urls: bool) -> None:
         )
 
     # None lets serve() key the default off the bind; --no-urls forces it off.
-    serve(host=host, port=port, open_browser=not no_browser, allow_urls=False if no_urls else None)
+    try:
+        serve(
+            host=host,
+            port=port,
+            open_browser=not no_browser,
+            allow_urls=False if no_urls else None,
+        )
+    except WebExtraMissing as exc:
+        raise SystemExit(str(exc)) from exc
 
 
 if __name__ == "__main__":  # pragma: no cover
