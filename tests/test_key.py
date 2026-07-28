@@ -205,6 +205,64 @@ def test_thin_evidence_pulls_the_scan_less_than_undamped():
     assert damped < undamped / 2
 
 
+def test_estimate_key_consults_the_evidence_damping(monkeypatch):
+    """The damping lives inside the key seam now, so every caller inherits it.
+
+    Both the global key and the modulation scan used to apply it themselves,
+    which is exactly the arrangement that let the two drift apart.
+    """
+    from chord_key_analyzer import key as key_module
+    from chord_key_analyzer.models import ChordSegment
+
+    calls: list[int] = []
+    original = key_module._evidence_support
+
+    def recording_support(segments):
+        calls.append(len(segments))
+        return original(segments)
+
+    monkeypatch.setattr(key_module, "_evidence_support", recording_support)
+    key_module.estimate_key_from_chroma(
+        np.ones(12), chords=[ChordSegment(0, 2, "C:maj"), ChordSegment(2, 4, "G:maj")]
+    )
+
+    assert calls == [2], "estimate_key_from_chroma did not damp the chord evidence"
+
+
+def test_thin_evidence_pulls_the_global_key_less_than_undamped():
+    """Counterpart to the modulation-path test above, for the global key seam.
+
+    Asserted on the score gap rather than on the winning key, and for the same
+    reason: one sustained G against a pure C-major profile still carries the
+    estimate even damped.  What the damping controls is by how much — one
+    distinct chord is a third of full support, so a third of the pull.
+    """
+    from chord_key_analyzer import key as key_module
+    from chord_key_analyzer.models import ChordSegment
+
+    chroma = np.zeros(12)
+    for pitch_class in (0, 2, 4, 5, 7, 9, 11):
+        chroma[pitch_class] = 1.0
+    chroma[0] += 0.8  # tonic emphasis, as in the profile test above
+    sustained = [ChordSegment(0.0, 45.0, "G:maj")]
+
+    best, _, alternatives = estimate_key_from_chroma(chroma, chords=sustained)
+    scores = {best.name: best.score, **{alt.name: alt.score for alt in alternatives}}
+    gap = scores["G major"] - scores["C major"]
+
+    g_index = key_module._TEMPLATE_NAMES.index(("G", "major"))
+    c_index = key_module._TEMPLATE_NAMES.index(("C", "major"))
+    profile = key_module._standardise(key_module.score_chroma_vector(chroma))
+    evidence = key_module._standardise(key_module.chord_evidence_scores(sustained))
+    profile_margin = profile[g_index] - profile[c_index]
+    evidence_margin = evidence[g_index] - evidence[c_index]
+
+    damped = profile_margin + key_module.KEY_CHORD_WEIGHT * (1 / 3) * evidence_margin
+    undamped = profile_margin + key_module.KEY_CHORD_WEIGHT * evidence_margin
+    assert gap == pytest.approx(damped)
+    assert gap < undamped / 2
+
+
 def test_no_chord_evidence_leaves_the_scan_untouched():
     """All-N chords carry zero support, so they must not perturb the scan."""
     from chord_key_analyzer.models import ChordSegment

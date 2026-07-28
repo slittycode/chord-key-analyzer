@@ -97,9 +97,9 @@ cka web --no-urls  # uploads only, no URL ingestion
 
 Drag in a file or paste a URL and you get the key card, an SVG chord timeline, the
 progression, and download links for the JSON and `.lab`. It is one static page with
-inline vanilla JS — no React, no node, no build step — and it binds to localhost only.
-The endpoint calls the exact same `analyze_audio()` the CLI does, so the two can never
-disagree.
+inline vanilla JS — no React, no node, no build step — and it binds to localhost by
+default. The endpoint calls the exact same `analyze_source()` the CLI does, so the two
+can never disagree.
 
 **URL ingestion and non-loopback binds.** The server has no authentication, so URL input
 — the one feature that makes it fetch on someone else's behalf — is enabled only when you
@@ -286,10 +286,15 @@ Versioned via `"schema": 1`.
                   "roman": ["I", "V", "vi", "IV"], "repeats": 3,
                   "start": 0.0, "end": 24.0}
   },
-  "meta": {"engine": "template", "version": "0.1.0", "tuning": 0.0,
-           "beats_reliable": true, "harmonic_rhythm": 2.0}
+  "meta": {"engine": "template", "version": "0.1.0", "sample_rate": 22050,
+           "hop_length": 2048, "tuning": 0.0, "beats_reliable": true,
+           "harmonic_rhythm": 2.0, "triads_only": false}
 }
 ```
+
+`meta` also carries `"offset"` — the `--start` value in seconds — but only when an
+excerpt was analysed. Every reported time is relative to the excerpt, so a consumer
+comparing against annotations for the full track adds it to each timestamp.
 
 ## Privacy
 

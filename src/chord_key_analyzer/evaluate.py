@@ -80,6 +80,17 @@ def _require_mir_eval():
     return mir_eval
 
 
+def require_eval_extra() -> None:
+    """Raise :class:`EvalExtraMissing` unless the [eval] extra is importable.
+
+    The public, side-effect-free door for callers that want to fail before doing
+    any work — ``cka eval`` checks it before walking the dataset, so a missing
+    extra prints the install hint instead of a discovery listing followed by an
+    error.  Mirrors :func:`~chord_key_analyzer.web.require_web_extra`.
+    """
+    _require_mir_eval()
+
+
 @dataclass(frozen=True)
 class EvalPair:
     """One evaluable track: audio plus the references that describe it."""
@@ -118,19 +129,49 @@ class TrackEvaluation:
         }
 
 
+def _extension_of(path: Path, stem: str) -> str | None:
+    """The lowercased extension ``path`` carries past ``stem``, or ``None``.
+
+    ``Track.key.lab`` past stem ``Track`` is ``key.lab``.  The stem is compared
+    case-sensitively on purpose: on a case-sensitive filesystem ``Song.lab`` and
+    ``song.lab`` are two different annotations, and quietly handing one of them
+    the other's audio is worse than reporting an orphan.  Only the extension is
+    case-folded, because ``.WAV`` really is a wav.
+    """
+    if not path.name.startswith(f"{stem}."):
+        return None
+    return path.name[len(stem) + 1 :].lower()
+
+
 def _audio_for(lab: Path) -> Path | None:
-    """The recording a ``.lab`` describes: same directory, same stem."""
-    for extension in AUDIO_EXTENSIONS:
-        candidate = lab.with_suffix(extension)
-        if candidate.exists():
-            return candidate
-    return None
+    """The recording a ``.lab`` describes: same directory, same stem.
+
+    Preference follows :data:`AUDIO_EXTENSIONS`, then name, so a directory
+    holding both ``track.wav`` and ``track.mp3`` resolves the same way twice.
+    """
+    candidates = [
+        (AUDIO_EXTENSIONS.index(f".{extension}"), path.name, path)
+        for path in lab.parent.iterdir()
+        if path.is_file()
+        and (extension := _extension_of(path, lab.stem)) is not None
+        and f".{extension}" in AUDIO_EXTENSIONS
+    ]
+    if not candidates:
+        return None
+    return min(candidates)[2]
 
 
 def _key_for(lab: Path) -> Path | None:
-    for candidate in (lab.with_suffix(".key"), lab.with_suffix(".key.lab")):
-        if candidate.exists():
-            return candidate
+    """The key annotation beside a chord ``.lab``, if there is one.
+
+    Same case rule as :func:`_audio_for`: exact stem, any spelling of the
+    extension.  A bare ``.key`` wins over Isophonics' ``.key.lab``.
+    """
+    beside = sorted(path for path in lab.parent.iterdir() if path.is_file())
+    for extension in ("key", "key.lab"):
+        for path in beside:
+            if _extension_of(path, lab.stem) == extension:
+                return path
     return None
 
 
@@ -145,9 +186,14 @@ def discover_pairs(root: str | Path) -> tuple[list[EvalPair], list[Path]]:
     pairs: list[EvalPair] = []
     orphans: list[Path] = []
 
-    for lab in sorted(root.rglob("*.lab")):
+    # Walked rather than globbed for `*.lab` so `Track.LAB` is found too: a
+    # dataset assembled on a case-preserving filesystem should not silently
+    # contribute nothing.
+    for lab in sorted(root.rglob("*")):
+        if not lab.is_file() or lab.suffix.lower() != ".lab":
+            continue
         # `song.key.lab` is a key reference, not a chord annotation.
-        if lab.name.endswith(".key.lab"):
+        if lab.name.lower().endswith(".key.lab"):
             continue
         audio = _audio_for(lab)
         if audio is None:
@@ -247,6 +293,9 @@ def evaluate_track(
     from .pipeline import analyze_source
 
     mir_eval = _require_mir_eval()
+    # Not a ValueError: mir_eval raises this straight off Exception, so it has to
+    # be named explicitly wherever a reference label reaches the scorer.
+    invalid_chord = mir_eval.chord.InvalidChordException
     evaluation = TrackEvaluation(name=pair.name)
 
     try:
@@ -272,8 +321,17 @@ def evaluate_track(
         est_labels = ["N"]
 
     # mir_eval pads and aligns the two interval sets itself, so no hand-rolled
-    # boundary matching is needed here.
-    scores = mir_eval.chord.evaluate(ref_intervals, ref_labels, est_intervals, est_labels)
+    # boundary matching is needed here.  It does, however, parse every reference
+    # label for the first time right here — `load_labeled_intervals` above reads
+    # the file without validating it — so one unparseable line in a hand-made
+    # `.lab` surfaces as an exception at this point.  Record it against the track
+    # and keep going, exactly as an undecodable audio file does.
+    try:
+        scores = mir_eval.chord.evaluate(ref_intervals, ref_labels, est_intervals, est_labels)
+    except (ValueError, invalid_chord) as exc:
+        evaluation.error = f"chord scoring failed: {exc}"
+        return evaluation
+
     evaluation.chord_scores = {
         metric: float(scores[metric]) for metric in CHORD_METRICS if metric in scores
     }
@@ -283,9 +341,15 @@ def evaluate_track(
         if reference_key is not None:
             evaluation.reference_key = reference_key
             evaluation.estimated_key = result.key.name
-            evaluation.key_score = float(
-                mir_eval.key.weighted_score(reference_key, result.key.name)
-            )
+            # load_key_reference() already rejects what it cannot normalise, so
+            # this is close to unreachable — but mir_eval owns the final say on
+            # what a key string is, and a corpus run must not die on its verdict.
+            try:
+                evaluation.key_score = float(
+                    mir_eval.key.weighted_score(reference_key, result.key.name)
+                )
+            except ValueError as exc:
+                evaluation.error = f"key scoring failed: {exc}"
 
     return evaluation
 

@@ -2,7 +2,7 @@
 
 Deliberately small — one FastAPI app, one HTML file, an in-memory job dict.  No
 database, no queue, no build step.  ``POST /analyze`` calls exactly the same
-:func:`~chord_key_analyzer.pipeline.analyze_audio` the CLI uses, so the two
+:func:`~chord_key_analyzer.pipeline.analyze_source` the CLI uses, so the two
 frontends cannot disagree about results.
 """
 

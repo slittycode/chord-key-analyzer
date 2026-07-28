@@ -132,20 +132,23 @@ def _confidence(scores: np.ndarray) -> float:
 def estimate_key_from_chroma(
     chroma_vector: np.ndarray,
     n_alternatives: int = 3,
-    chord_scores: np.ndarray | None = None,
-    chord_weight: float = KEY_CHORD_WEIGHT,
+    chords: list[ChordSegment] | None = None,
+    use_edges: bool = True,
 ) -> tuple[KeyCandidate, float, list[KeyCandidate]]:
     """Best key, its confidence, and the runners-up for one pooled chroma vector.
 
-    When ``chord_scores`` is supplied (from :func:`chord_evidence_scores`) it is
-    blended into the profile correlations.  This is what separates a key from
-    its relative major/minor: the two share an identical pitch-class content, so
-    no amount of chroma pooling can tell them apart, but which chord functions as
+    When ``chords`` is supplied, the chord evidence is blended in (see
+    :func:`_blend_chord_evidence`).  That is what separates a key from its
+    relative major/minor: the two share an identical pitch-class content, so no
+    amount of chroma pooling can tell them apart, but which chord functions as
     home is decisive and shows up plainly in the chord track.
+
+    ``use_edges`` is passed through to :func:`chord_evidence_scores`; turn it off
+    for an arbitrary excerpt, whose first and last chords are not structural.
     """
     scores = _standardise(score_chroma_vector(chroma_vector))
-    if chord_scores is not None:
-        scores = scores + chord_weight * _standardise(chord_scores)
+    if chords:
+        scores = _blend_chord_evidence(scores, chords, use_edges=use_edges)
     order = np.argsort(scores)[::-1]
 
     best_index = int(order[0])
@@ -272,6 +275,25 @@ def chord_evidence_scores(
     return scores
 
 
+def _blend_chord_evidence(
+    scores: np.ndarray, chords: list[ChordSegment], use_edges: bool
+) -> np.ndarray:
+    """Add the damped chord-evidence term to standardised profile ``scores``.
+
+    The one place the evidence weight is applied.  Both callers — the global key
+    and each modulation window — need the same three things done in the same
+    order (score the chords, standardise, damp by how many distinct chords back
+    it), and keeping that here is what stops the two paths from drifting apart
+    the way they did when each did its own blending.
+    """
+    support = _evidence_support(chords)
+    if support <= 0:
+        return scores
+    return scores + KEY_CHORD_WEIGHT * support * _standardise(
+        chord_evidence_scores(chords, use_edges=use_edges)
+    )
+
+
 def _pooled_chroma(features: Features) -> np.ndarray:
     """Loudness-weighted average chroma over the non-silent part of the track."""
     mask = ~features.silent
@@ -345,12 +367,8 @@ def detect_modulations(
             # is.  A 20 s window is *more* prone to thin evidence than a whole
             # track — one sustained chord can fill it — and undamped evidence let
             # a single chord drag the window into its own key.
-            support = _evidence_support(local_chords)
-            if support > 0:
-                # No edge bonus here: see chord_evidence_scores().
-                scores = scores + KEY_CHORD_WEIGHT * support * _standardise(
-                    chord_evidence_scores(local_chords, use_edges=False)
-                )
+            # No edge bonus here: see chord_evidence_scores().
+            scores = _blend_chord_evidence(scores, local_chords, use_edges=False)
         score_rows.append(scores)
 
     # The local key is a piecewise-constant latent observed through noisy
@@ -401,12 +419,7 @@ def detect_key(
     relative major/minor.
     """
     pooled = _pooled_chroma(features)
-    chord_scores = chord_evidence_scores(chords) if chords else None
-    best, confidence, alternatives = estimate_key_from_chroma(
-        pooled,
-        chord_scores=chord_scores,
-        chord_weight=KEY_CHORD_WEIGHT * (_evidence_support(chords) if chords else 0.0),
-    )
+    best, confidence, alternatives = estimate_key_from_chroma(pooled, chords=chords)
 
     modulations: list[Modulation] = []
     if scan_modulations:

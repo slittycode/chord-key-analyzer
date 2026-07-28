@@ -65,6 +65,18 @@ def test_web_without_uvicorn_prints_the_install_hint(runner, monkeypatch):
     assert "Traceback" not in result.output
 
 
+def test_eval_without_mir_eval_prints_the_install_hint_first(runner, monkeypatch, tmp_path):
+    """The hint must land before discovery, not after a listing of tracks
+    the run was never going to be able to score."""
+    monkeypatch.setitem(sys.modules, "mir_eval", None)
+
+    result = runner.invoke(main, ["eval", str(tmp_path)])
+    assert result.exit_code != 0
+    assert "chord-key-analyzer[eval]" in result.output
+    assert "no evaluable tracks" not in result.output.lower()
+    assert "Traceback" not in result.output
+
+
 def test_analyze_renders_a_report(runner, pop_wav):
     result = runner.invoke(main, ["analyze", str(pop_wav)])
     assert result.exit_code == 0, result.output

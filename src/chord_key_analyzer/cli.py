@@ -163,6 +163,7 @@ def eval_cmd(
         discover_pairs,
         evaluate_track,
         render_report,
+        require_eval_extra,
         summarise,
         write_report_csv,
         write_report_json,
@@ -170,6 +171,13 @@ def eval_cmd(
 
     console = Console()
     status_console = Console(stderr=True)
+
+    # Before discovery, not per track: a missing extra should print the install
+    # hint on its own, not after a listing of the tracks it will never score.
+    try:
+        require_eval_extra()
+    except EvalExtraMissing as exc:
+        raise SystemExit(str(exc)) from exc
 
     pairs, orphans = discover_pairs(dataset)
     for orphan in orphans:
@@ -186,13 +194,10 @@ def eval_cmd(
         raise SystemExit(2)
 
     tracks = []
-    try:
-        for index, pair in enumerate(pairs, start=1):
-            if not quiet:
-                status_console.print(f"[dim]({index}/{len(pairs)}) {pair.name}[/dim]")
-            tracks.append(evaluate_track(pair, engine=engine, triads_only=triads_only))
-    except EvalExtraMissing as exc:
-        raise SystemExit(str(exc)) from exc
+    for index, pair in enumerate(pairs, start=1):
+        if not quiet:
+            status_console.print(f"[dim]({index}/{len(pairs)}) {pair.name}[/dim]")
+        tracks.append(evaluate_track(pair, engine=engine, triads_only=triads_only))
 
     summary = summarise(tracks)
 

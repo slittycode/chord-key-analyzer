@@ -105,12 +105,12 @@ def test_resolve_source_reads_local_files(pop_wav):
     assert loaded.source == str(pop_wav)
 
 
-def test_missing_ytdlp_gives_an_install_hint(monkeypatch):
+def test_missing_ytdlp_gives_an_install_hint(monkeypatch, tmp_path):
     """The [url] extra is optional, so its absence must be explained, not raised
     as a bare ImportError."""
     monkeypatch.setitem(sys.modules, "yt_dlp", None)
     with pytest.raises(ingest.IngestError, match=r"chord-key-analyzer\[url\]"):
-        ingest.download_url("https://example.com/song")
+        ingest.download_url("https://example.com/song", dest_dir=tmp_path)
 
 
 def test_url_download_returns_the_extracted_wav(monkeypatch, tmp_path):
@@ -187,9 +187,9 @@ def test_url_download_reports_yt_dlp_failures(monkeypatch, tmp_path):
 def _fake_ytdl_recording_its_dest(monkeypatch, *, write_audio: bool) -> list[Path]:
     """Install a yt-dlp stub that records the directory yt-dlp was told to use.
 
-    The real ``download_url`` picks that directory itself when no ``dest_dir`` is
-    passed, so reading it back out of ``outtmpl`` is the only way a test can then
-    assert the directory was cleaned up.
+    ``downloaded_media`` makes up that temporary directory itself and hands it to
+    ``download_url``, so reading it back out of ``outtmpl`` is the only way a
+    test can then assert the directory was cleaned up.
     """
     recorded: list[Path] = []
 

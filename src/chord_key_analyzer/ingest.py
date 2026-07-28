@@ -194,15 +194,17 @@ def probe_duration(path: str | Path) -> float | None:
         return None
 
 
-def download_url(url: str, dest_dir: str | Path | None = None) -> Path:
-    """Fetch ``url`` with yt-dlp and return the path to the downloaded audio.
+def download_url(url: str, dest_dir: str | Path) -> Path:
+    """Fetch ``url`` with yt-dlp into ``dest_dir`` and return the downloaded audio.
 
     yt-dlp is an optional dependency (``pip install 'chord-key-analyzer[url]'``)
     and is imported lazily so the base install never pays for it.
 
-    When ``dest_dir`` is ``None`` a temporary directory is created and **the
-    caller owns it** — nothing here deletes it.  Prefer :func:`downloaded_media`,
-    which ties that directory's lifetime to a ``with`` block.
+    ``dest_dir`` is required, and **the caller owns it** — nothing here deletes
+    it, on either the success or the failure path.  Callers should go through
+    :func:`downloaded_media`, which ties that directory to a ``with`` block; a
+    default temporary directory here would just be a leak waiting to be
+    reintroduced by the next caller who forgets to clean up.
     """
     try:
         from yt_dlp import YoutubeDL
@@ -214,7 +216,7 @@ def download_url(url: str, dest_dir: str | Path | None = None) -> Path:
 
     _require_ffmpeg("to extract audio from downloaded media")
 
-    dest = Path(dest_dir) if dest_dir else Path(tempfile.mkdtemp(prefix="cka-"))
+    dest = Path(dest_dir)
     dest.mkdir(parents=True, exist_ok=True)
 
     options = {

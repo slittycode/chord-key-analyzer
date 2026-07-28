@@ -10,7 +10,7 @@ smooths the result with a Viterbi decode.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Protocol, runtime_checkable
+from typing import Protocol
 
 import numpy as np
 
@@ -46,7 +46,6 @@ SELF_TRANSITION_PROB = 0.95
 MIN_SEGMENT_DURATION = 0.30
 
 
-@runtime_checkable
 class ChordEngine(Protocol):
     """Any chord recogniser the CLI can drive."""
 
