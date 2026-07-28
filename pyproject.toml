@@ -33,6 +33,9 @@ url = ["yt-dlp>=2024.1.1"]
 web = ["fastapi>=0.110", "uvicorn>=0.27", "python-multipart>=0.0.9"]
 # Reserved for a future local neural chord backend (see docs/PLAN.md). Empty in v1.
 deep = []
+# `cka eval`: mir_eval is the reference implementation of the MIREX metrics.
+# It needs only numpy and scipy, both already present via librosa.
+eval = ["mir_eval>=0.7"]
 dev = ["pytest>=8.0", "ruff>=0.5", "httpx>=0.27"]
 
 [project.scripts]

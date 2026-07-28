@@ -128,6 +128,87 @@ def analyze(
         render(result, console=console)
 
 
+@main.command(name="eval")
+@click.argument("dataset", metavar="DATASET", type=click.Path(exists=True, file_okay=False))
+@click.option(
+    "--json", "json_path", metavar="PATH", help="Write the report as JSON ('-' for stdout)."
+)
+@click.option("--csv", "csv_path", metavar="PATH", help="Write the report as CSV ('-' for stdout).")
+@click.option("--triads-only", is_flag=True, help="Restrict vocabulary to maj/min/dim/aug.")
+@click.option(
+    "--engine",
+    type=click.Choice(["template"], case_sensitive=False),
+    default="template",
+    show_default=True,
+    help="Chord recognition backend.",
+)
+@click.option("--quiet", "-q", is_flag=True, help="Suppress the report table.")
+def eval_cmd(
+    dataset: str,
+    json_path: str | None,
+    csv_path: str | None,
+    triads_only: bool,
+    engine: str,
+    quiet: bool,
+) -> None:
+    """Score DATASET against its reference annotations (requires the [eval] extra).
+
+    DATASET is a directory of audio files, each beside a same-stem .lab of
+    reference chords and optionally a .key file. Subdirectories are searched.
+    Annotations are never downloaded — assemble the directory yourself.
+    """
+    # Imported here, like `analyze` does, so `cka --help` stays instant.
+    from .evaluate import (
+        EvalExtraMissing,
+        discover_pairs,
+        evaluate_track,
+        render_report,
+        summarise,
+        write_report_csv,
+        write_report_json,
+    )
+
+    console = Console()
+    status_console = Console(stderr=True)
+
+    pairs, orphans = discover_pairs(dataset)
+    for orphan in orphans:
+        status_console.print(f"[yellow]Skipping[/yellow] {orphan}: no audio file beside it.")
+
+    if not pairs:
+        status_console.print(
+            f"[red]Error:[/red] no evaluable tracks found in {dataset}.\n"
+            "Expected audio files each beside a same-stem .lab of reference chords, e.g.\n"
+            "  dataset/song.wav\n"
+            "  dataset/song.lab\n"
+            "  dataset/song.key   (optional)"
+        )
+        raise SystemExit(2)
+
+    tracks = []
+    try:
+        for index, pair in enumerate(pairs, start=1):
+            if not quiet:
+                status_console.print(f"[dim]({index}/{len(pairs)}) {pair.name}[/dim]")
+            tracks.append(evaluate_track(pair, engine=engine, triads_only=triads_only))
+    except EvalExtraMissing as exc:
+        raise SystemExit(str(exc)) from exc
+
+    summary = summarise(tracks)
+
+    try:
+        if json_path:
+            write_report_json(tracks, summary, json_path)
+        if csv_path:
+            write_report_csv(tracks, summary, csv_path)
+    except OSError as exc:
+        status_console.print(f"[red]Error:[/red] cannot write output: {exc}")
+        raise SystemExit(2) from exc
+
+    if not quiet:
+        render_report(tracks, summary, console=console)
+
+
 @main.command()
 @click.option("--host", default="127.0.0.1", show_default=True, help="Interface to bind.")
 @click.option("--port", default=8321, show_default=True, type=int, help="Port to bind.")
