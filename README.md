@@ -182,28 +182,6 @@ audio ──▶ decode 22.05 kHz mono ──▶ tuning estimate ──▶ HPSS �
 8. **Sections**: a self-similarity matrix over 1 s feature blocks is scanned with a Foote
    checkerboard kernel, and the peaks of the resulting novelty curve are the boundaries.
 
-### Sections
-
-Tracks longer than 30 seconds are split into structural spans, each reported with its own
-local key hint and progression.
-
-Labels are bare letters — `A`, `B`, `A'` — and that is deliberate. What the method
-measures is **repetition**: this stretch resembles that one, and a primed letter means it
-resembles it loosely. Which repeated span is the "chorus" is a question about song form
-that no self-similarity analysis can answer, so the labels do not pretend to. If you want
-verse/chorus naming, this gives you the boundaries to hang it on, not the names.
-
-Roman numerals inside a section stay relative to the **track's** key, not the section's
-own. The point of listing them per section is to compare sections with each other, and
-renumbering each against its own tonic would make two identical progressions look
-different.
-
-Blocks are a fixed 1 second rather than beat-synchronous. Sections are ±2–4 second
-objects, so beat resolution buys nothing real, and beat-syncing would couple section
-detection to beat-tracker quality on exactly the rubato material where the grid is least
-trustworthy — the same reasoning that keeps the chord decoder frame-based. Pass
-`--no-sections` to skip the scan.
-
 ### Chord vocabulary
 
 `maj`, `min`, `dim`, `aug`, `maj7`, `min7`, `7` (dominant), plus `N` for no-chord.
@@ -258,6 +236,28 @@ material does.
 Note the limit this does *not* lift: the chord's **root** is still decided by chroma alone.
 A first-inversion C major and an A minor seventh share three pitch classes, and adding bass
 information to the reporting does not change which one the template decoder picks.
+
+### Sections
+
+Tracks longer than 30 seconds are split into structural spans, each reported with its own
+local key hint and progression.
+
+Labels are bare letters — `A`, `B`, `A'` — and that is deliberate. What the method
+measures is **repetition**: this stretch resembles that one, and a primed letter means it
+resembles it loosely. Which repeated span is the "chorus" is a question about song form
+that no self-similarity analysis can answer, so the labels do not pretend to. If you want
+verse/chorus naming, this gives you the boundaries to hang it on, not the names.
+
+Roman numerals inside a section stay relative to the **track's** key, not the section's
+own. The point of listing them per section is to compare sections with each other, and
+renumbering each against its own tonic would make two identical progressions look
+different.
+
+Blocks are a fixed 1 second rather than beat-synchronous. Sections are ±2–4 second
+objects, so beat resolution buys nothing real, and beat-syncing would couple section
+detection to beat-tracker quality on exactly the rubato material where the grid is least
+trustworthy — the same reasoning that keeps the chord decoder frame-based. Pass
+`--no-sections` to skip the scan.
 
 ## Accuracy expectations
 
