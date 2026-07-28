@@ -491,14 +491,14 @@ def respell_with_bass(segments: list[ChordSegment]) -> list[ChordSegment]:
     result: list[ChordSegment] = []
     for segment in segments:
         parsed = parse_chord_label(segment.label)
-        rule = None if parsed is None else _RESPELLINGS.get((parsed[1], segment.bass_degree))
-        if rule is None or parsed is None:
+        rule = _RESPELLINGS.get((parsed[1], segment.bass_degree)) if parsed else None
+        if parsed is None or rule is None:
             result.append(segment)
             continue
+
+        root, _ = parsed
         quality, shift = rule
-        result.append(
-            replace(segment, label=chord_label(parsed[0] + shift, quality), bass=None)
-        )
+        result.append(replace(segment, label=chord_label(root + shift, quality), bass=None))
     return result
 
 
