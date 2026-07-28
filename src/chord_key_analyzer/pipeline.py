@@ -14,6 +14,7 @@ from .ingest import TARGET_SR, resolve_source
 from .key import detect_key
 from .models import AnalysisResult
 from .progression import harmonic_rhythm, summarise_progression
+from .sections import detect_sections
 
 ProgressHook = Callable[[str, float], None]
 
@@ -31,6 +32,7 @@ def analyze_audio(
     harmonic: bool = True,
     beat_snap: bool = True,
     scan_modulations: bool = True,
+    scan_sections: bool = True,
     hop_length: int = DEFAULT_HOP,
     progress: ProgressHook = _noop_progress,
 ) -> AnalysisResult:
@@ -61,6 +63,11 @@ def analyze_audio(
     progress("progression", 0.9)
     progression = summarise_progression(chords, key)
 
+    # Last: sections want the finished chord track and the global key, so their
+    # Roman numerals are comparable with the whole-track progression above.
+    progress("sections", 0.95)
+    sections = detect_sections(features, chords, key) if scan_sections else []
+
     progress("done", 1.0)
     return AnalysisResult(
         file=source,
@@ -68,6 +75,7 @@ def analyze_audio(
         key=key,
         chords=chords,
         progression=progression,
+        sections=sections,
         tempo=features.tempo,
         meta={
             "engine": chord_engine.name,
@@ -89,6 +97,7 @@ def analyze_source(
     harmonic: bool = True,
     beat_snap: bool = True,
     scan_modulations: bool = True,
+    scan_sections: bool = True,
     start: float = 0.0,
     duration: float | None = None,
     progress: ProgressHook = _noop_progress,
@@ -106,6 +115,7 @@ def analyze_source(
         harmonic=harmonic,
         beat_snap=beat_snap,
         scan_modulations=scan_modulations,
+        scan_sections=scan_sections,
         progress=progress,
     )
 

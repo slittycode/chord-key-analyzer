@@ -83,7 +83,7 @@ cka analyze 'https://www.youtube.com/watch?v=...'   # needs the [url] extra
 ```
 
 Useful flags: `--no-hpss` (skip harmonic/percussive separation — faster, less accurate on
-drum-heavy material), `--no-beat-snap`, `--no-modulations`, `--quiet`.
+drum-heavy material), `--no-beat-snap`, `--no-modulations`, `--no-sections`, `--quiet`.
 
 `cka eval` scores the analyzer against reference annotations — see
 [Measuring accuracy](#measuring-accuracy).
@@ -171,6 +171,30 @@ audio ──▶ decode 22.05 kHz mono ──▶ tuning estimate ──▶ HPSS �
    phantom key changes.
 7. **Progression**: chords become Roman numerals in the detected key (borrowed chords are
    written literally, e.g. `bVII`), and n-gram scanning finds the dominant repeating loop.
+8. **Sections**: a self-similarity matrix over 1 s feature blocks is scanned with a Foote
+   checkerboard kernel, and the peaks of the resulting novelty curve are the boundaries.
+
+### Sections
+
+Tracks longer than 30 seconds are split into structural spans, each reported with its own
+local key hint and progression.
+
+Labels are bare letters — `A`, `B`, `A'` — and that is deliberate. What the method
+measures is **repetition**: this stretch resembles that one, and a primed letter means it
+resembles it loosely. Which repeated span is the "chorus" is a question about song form
+that no self-similarity analysis can answer, so the labels do not pretend to. If you want
+verse/chorus naming, this gives you the boundaries to hang it on, not the names.
+
+Roman numerals inside a section stay relative to the **track's** key, not the section's
+own. The point of listing them per section is to compare sections with each other, and
+renumbering each against its own tonic would make two identical progressions look
+different.
+
+Blocks are a fixed 1 second rather than beat-synchronous. Sections are ±2–4 second
+objects, so beat resolution buys nothing real, and beat-syncing would couple section
+detection to beat-tracker quality on exactly the rubato material where the grid is least
+trustworthy — the same reasoning that keeps the chord decoder frame-based. Pass
+`--no-sections` to skip the scan.
 
 ### Chord vocabulary
 
@@ -343,6 +367,11 @@ do not recognise.
                   "roman": ["I", "V", "vi", "IV"], "repeats": 3,
                   "start": 0.0, "end": 24.0}
   },
+  "sections": [{"start": 0.0, "end": 32.0, "label": "A", "tonic": "C", "mode": "major",
+                "key_confidence": 0.79,
+                "progression": {"roman": ["I", "V", "vi", "IV"],
+                                "labels": ["C:maj", "G:maj", "A:min", "F:maj"],
+                                "main_loop": null}}],
   "meta": {"engine": "template", "version": "0.1.0", "sample_rate": 22050,
            "hop_length": 2048, "tuning": 0.0, "beats_reliable": true,
            "harmonic_rhythm": 2.0, "triads_only": false}

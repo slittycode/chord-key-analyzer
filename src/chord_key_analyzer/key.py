@@ -32,6 +32,7 @@ from .models import (
     KeyCandidate,
     KeyEstimate,
     Modulation,
+    clip_segments,
     parse_chord_label,
 )
 
@@ -356,23 +357,14 @@ def _pooled_chroma(features: Features) -> np.ndarray:
 def _chords_in_window(
     chords: list[ChordSegment] | None, start: float, end: float
 ) -> list[ChordSegment] | None:
-    """Chords clipped to ``[start, end)``, so window scores use window-local time."""
+    """Chords clipped to ``[start, end)``, or ``None`` when the window is empty.
+
+    Thin wrapper over :func:`~chord_key_analyzer.models.clip_segments`; the
+    ``None`` is what lets the caller say "no evidence here" in one check.
+    """
     if not chords:
         return None
-    clipped = []
-    for chord in chords:
-        overlap_start = max(chord.start, start)
-        overlap_end = min(chord.end, end)
-        if overlap_end > overlap_start:
-            clipped.append(
-                ChordSegment(
-                    start=overlap_start,
-                    end=overlap_end,
-                    label=chord.label,
-                    confidence=chord.confidence,
-                )
-            )
-    return clipped or None
+    return clip_segments(chords, start, end) or None
 
 
 def detect_modulations(

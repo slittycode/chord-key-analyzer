@@ -16,6 +16,7 @@ from chord_key_analyzer.models import (
     Loop,
     Modulation,
     ProgressionSummary,
+    Section,
     chord_label,
     parse_chord_label,
 )
@@ -46,6 +47,18 @@ def sample_result():
         ),
         tempo=120.0,
         meta={"engine": "template", "version": "0.1.0"},
+        sections=[
+            Section(
+                start=0.0,
+                end=4.0,
+                label="A",
+                tonic="C",
+                mode="major",
+                key_confidence=0.77,
+                progression=ProgressionSummary(["I", "V"], ["C:maj", "G:maj"], None),
+            ),
+            Section(start=4.0, end=8.0, label="B"),
+        ],
     )
 
 
@@ -71,7 +84,17 @@ def test_json_top_level_shape_is_stable():
         "key",
         "chords",
         "progression",
+        "sections",
         "meta",
+    }
+    assert set(payload["sections"][0]) == {
+        "start",
+        "end",
+        "label",
+        "tonic",
+        "mode",
+        "key_confidence",
+        "progression",
     }
     assert set(payload["key"]) == {
         "tonic",
@@ -140,6 +163,35 @@ def test_render_shows_a_slash_chord_by_note_name():
     console = Console(record=True, width=100)
     render(sample_result(), console=console)
     assert "G:maj/B" in console.export_text()
+
+
+def test_json_carries_sections():
+    payload = json.loads(to_json(sample_result()))
+    first, second = payload["sections"]
+    assert (first["label"], first["tonic"], first["mode"]) == ("A", "C", "major")
+    assert first["progression"]["roman"] == ["I", "V"]
+    assert (second["label"], second["tonic"], second["progression"]) == ("B", None, None)
+
+
+def test_render_shows_the_sections_panel():
+    console = Console(record=True, width=100)
+    render(sample_result(), console=console)
+    text = console.export_text()
+    assert "Sections" in text
+    assert "0:00.0–0:04.0" in text
+
+
+def test_render_omits_the_sections_panel_when_there_are_none():
+    result = AnalysisResult(
+        file="short.wav",
+        duration=8.0,
+        key=KeyEstimate("C", "major", 0.8),
+        chords=[ChordSegment(0.0, 8.0, "C:maj", 0.9)],
+        progression=ProgressionSummary(["I"], ["C:maj"], None),
+    )
+    console = Console(record=True, width=100)
+    render(result, console=console)
+    assert "Sections" not in console.export_text()
 
 
 def test_lab_keeps_the_no_chord_state():

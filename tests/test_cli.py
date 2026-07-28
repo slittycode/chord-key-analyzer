@@ -33,7 +33,8 @@ def test_help_lists_the_commands(runner):
 def test_analyze_help_documents_the_flags(runner):
     result = runner.invoke(main, ["analyze", "--help"])
     assert result.exit_code == 0
-    for flag in ("--json", "--lab", "--start", "--duration", "--triads-only", "--engine"):
+    for flag in ("--json", "--lab", "--start", "--duration", "--triads-only", "--engine",
+                 "--no-sections"):
         assert flag in result.output
 
 
@@ -176,6 +177,15 @@ def test_no_hpss_still_works(runner, pop_wav, tmp_path):
     )
     assert result.exit_code == 0, result.output
     assert json.loads(destination.read_text())["key"]["tonic"] == "C"
+
+
+def test_no_sections_flag_skips_the_scan(runner, pop_wav, tmp_path):
+    destination = tmp_path / "nosections.json"
+    result = runner.invoke(
+        main, ["analyze", str(pop_wav), "--no-sections", "--json", str(destination), "--quiet"]
+    )
+    assert result.exit_code == 0, result.output
+    assert json.loads(destination.read_text())["sections"] == []
 
 
 def test_no_modulations_flag_skips_the_scan(runner, pop_wav, tmp_path):

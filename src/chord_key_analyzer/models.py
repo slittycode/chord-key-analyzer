@@ -7,7 +7,7 @@ through JSON needs a matching entry in :meth:`AnalysisResult.to_dict`.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any
 
 SCHEMA_VERSION = 1
@@ -227,6 +227,24 @@ class ChordSegment:
         }
 
 
+def clip_segments(
+    segments: list[ChordSegment], start: float, end: float
+) -> list[ChordSegment]:
+    """The parts of ``segments`` sounding inside ``[start, end)``, trimmed to it.
+
+    Times stay absolute; only the extents move.  Anything that scores a span of
+    the track — a modulation window, a section — needs each chord weighted by how
+    long it sounds *within* that span, not by its full length.
+    """
+    clipped = []
+    for segment in segments:
+        overlap_start = max(segment.start, start)
+        overlap_end = min(segment.end, end)
+        if overlap_end > overlap_start:
+            clipped.append(replace(segment, start=overlap_start, end=overlap_end))
+    return clipped
+
+
 @dataclass(frozen=True)
 class Loop:
     """The dominant repeating chord cycle found in the track."""
@@ -264,6 +282,46 @@ class ProgressionSummary:
 
 
 @dataclass(frozen=True)
+class Section:
+    """One structural span of the track, with its own local harmony.
+
+    ``label`` is a bare letter — ``A``, ``B``, ``A'`` — and says nothing about
+    musical function on purpose.  What the detector measures is repetition: that
+    this stretch resembles that one.  Calling a span "chorus" would be a claim
+    about song form that no self-similarity analysis can support.
+    """
+
+    start: float
+    end: float
+    label: str
+    tonic: str | None = None
+    mode: str | None = None
+    key_confidence: float | None = None
+    progression: ProgressionSummary | None = None
+
+    @property
+    def duration(self) -> float:
+        return self.end - self.start
+
+    @property
+    def key_name(self) -> str | None:
+        return None if self.tonic is None else f"{self.tonic} {self.mode}"
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "start": round(self.start, 3),
+            "end": round(self.end, 3),
+            "label": self.label,
+            "tonic": self.tonic,
+            "mode": self.mode,
+            "key_confidence": (
+                None if self.key_confidence is None else round(self.key_confidence, 4)
+            ),
+            "progression": self.progression.to_dict() if self.progression else None,
+        }
+
+
+@dataclass(frozen=True)
 class AnalysisResult:
     """Everything the pipeline produces for one track."""
 
@@ -274,6 +332,7 @@ class AnalysisResult:
     progression: ProgressionSummary
     tempo: float | None = None
     meta: dict[str, Any] = field(default_factory=dict)
+    sections: list[Section] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -284,5 +343,6 @@ class AnalysisResult:
             "key": self.key.to_dict(),
             "chords": [c.to_dict() for c in self.chords],
             "progression": self.progression.to_dict(),
+            "sections": [s.to_dict() for s in self.sections],
             "meta": dict(self.meta),
         }

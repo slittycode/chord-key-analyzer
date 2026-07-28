@@ -38,6 +38,7 @@ def main() -> None:
 @click.option("--no-hpss", is_flag=True, help="Skip harmonic/percussive separation (faster).")
 @click.option("--no-beat-snap", is_flag=True, help="Do not snap chord boundaries to beats.")
 @click.option("--no-modulations", is_flag=True, help="Skip the sliding-window modulation scan.")
+@click.option("--no-sections", is_flag=True, help="Skip the structural section scan.")
 @click.option("--quiet", "-q", is_flag=True, help="Suppress the terminal report.")
 def analyze(
     song: str,
@@ -50,6 +51,7 @@ def analyze(
     no_hpss: bool,
     no_beat_snap: bool,
     no_modulations: bool,
+    no_sections: bool,
     quiet: bool,
 ) -> None:
     """Analyse SONG, a local audio file or a yt-dlp-supported URL."""
@@ -74,6 +76,7 @@ def analyze(
         "key": "Detecting key",
         "chords": "Recognising chords",
         "progression": "Analysing progression",
+        "sections": "Finding sections",
         "done": "Done",
     }
 
@@ -86,6 +89,7 @@ def analyze(
                 harmonic=not no_hpss,
                 beat_snap=not no_beat_snap,
                 scan_modulations=not no_modulations,
+                scan_sections=not no_sections,
                 start=start,
                 duration=duration,
             )
@@ -102,6 +106,7 @@ def analyze(
                     harmonic=not no_hpss,
                     beat_snap=not no_beat_snap,
                     scan_modulations=not no_modulations,
+                    scan_sections=not no_sections,
                     start=start,
                     duration=duration,
                     progress=progress,

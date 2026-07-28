@@ -94,6 +94,29 @@ def _key_panel(result: AnalysisResult) -> Panel:
     return Panel(body, title="Key", border_style="cyan", expand=False)
 
 
+def _sections_panel(result: AnalysisResult) -> Panel | None:
+    """One line per structural section: letter, span, local key, progression."""
+    if not result.sections:
+        return None
+
+    body = Text()
+    for index, section in enumerate(result.sections):
+        if index:
+            body.append("\n")
+        body.append(f"{section.label:<3}", style="bold cyan")
+        body.append(
+            f" {format_time(section.start)}–{format_time(section.end)}  ", style="dim"
+        )
+        if section.key_name:
+            body.append(f"{section.key_name}  ")
+        if section.progression and section.progression.roman:
+            body.append(
+                " – ".join(section.progression.roman[:8]), style="magenta"
+            )
+
+    return Panel(body, title="Sections", border_style="blue", expand=False)
+
+
 def _chord_table(result: AnalysisResult) -> Table:
     table = Table(title="Chords", header_style="bold", expand=False)
     table.add_column("Start", justify="right", style="dim")
@@ -153,6 +176,9 @@ def render(result: AnalysisResult, console: Console | None = None) -> None:
     console.print()
     console.print(Text(result.file, style="bold white"))
     console.print(_key_panel(result))
+    sections = _sections_panel(result)
+    if sections is not None:
+        console.print(sections)
     if result.chords:
         console.print(_chord_table(result))
         console.print(_progression_panel(result))
