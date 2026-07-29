@@ -6,8 +6,15 @@ import sys
 
 import click
 from rich.console import Console
+from rich.text import Text
 
 from . import __version__
+
+# Runtime strings — exception messages, file paths — are printed as Text rather
+# than interpolated into a markup string.  Rich reads `[...]` in markup as a style
+# tag, so the install hint for the [url] extra printed as
+# "pip install 'chord-key-analyzer'": the one part the user needed, silently
+# eaten.  Text.assemble() styles the prefix and takes the body as literal data.
 
 CONTEXT_SETTINGS = {"help_option_names": ["-h", "--help"]}
 
@@ -38,6 +45,7 @@ def main() -> None:
 @click.option("--no-hpss", is_flag=True, help="Skip harmonic/percussive separation (faster).")
 @click.option("--no-beat-snap", is_flag=True, help="Do not snap chord boundaries to beats.")
 @click.option("--no-modulations", is_flag=True, help="Skip the sliding-window modulation scan.")
+@click.option("--no-sections", is_flag=True, help="Skip the structural section scan.")
 @click.option("--quiet", "-q", is_flag=True, help="Suppress the terminal report.")
 def analyze(
     song: str,
@@ -50,6 +58,7 @@ def analyze(
     no_hpss: bool,
     no_beat_snap: bool,
     no_modulations: bool,
+    no_sections: bool,
     quiet: bool,
 ) -> None:
     """Analyse SONG, a local audio file or a yt-dlp-supported URL."""
@@ -74,6 +83,7 @@ def analyze(
         "key": "Detecting key",
         "chords": "Recognising chords",
         "progression": "Analysing progression",
+        "sections": "Finding sections",
         "done": "Done",
     }
 
@@ -86,6 +96,7 @@ def analyze(
                 harmonic=not no_hpss,
                 beat_snap=not no_beat_snap,
                 scan_modulations=not no_modulations,
+                scan_sections=not no_sections,
                 start=start,
                 duration=duration,
             )
@@ -102,12 +113,13 @@ def analyze(
                     harmonic=not no_hpss,
                     beat_snap=not no_beat_snap,
                     scan_modulations=not no_modulations,
+                    scan_sections=not no_sections,
                     start=start,
                     duration=duration,
                     progress=progress,
                 )
     except IngestError as exc:
-        status_console.print(f"[red]Error:[/red] {exc}")
+        status_console.print(Text.assemble(("Error: ", "red"), str(exc)))
         raise SystemExit(2) from exc
 
     # No `except ValueError` here: the only ValueError the pipeline raises is
@@ -121,7 +133,9 @@ def analyze(
         if lab_path:
             write_lab(result, lab_path)
     except OSError as exc:
-        status_console.print(f"[red]Error:[/red] cannot write output: {exc}")
+        status_console.print(
+            Text.assemble(("Error: ", "red"), f"cannot write output: {exc}")
+        )
         raise SystemExit(2) from exc
 
     if not quiet:
@@ -163,6 +177,7 @@ def eval_cmd(
         discover_pairs,
         evaluate_track,
         render_report,
+        require_eval_extra,
         summarise,
         write_report_csv,
         write_report_json,
@@ -171,9 +186,18 @@ def eval_cmd(
     console = Console()
     status_console = Console(stderr=True)
 
+    # Before discovery, not per track: a missing extra should print the install
+    # hint on its own, not after a listing of the tracks it will never score.
+    try:
+        require_eval_extra()
+    except EvalExtraMissing as exc:
+        raise SystemExit(str(exc)) from exc
+
     pairs, orphans = discover_pairs(dataset)
     for orphan in orphans:
-        status_console.print(f"[yellow]Skipping[/yellow] {orphan}: no audio file beside it.")
+        status_console.print(
+            Text.assemble(("Skipping ", "yellow"), f"{orphan}: no audio file beside it.")
+        )
 
     if not pairs:
         status_console.print(
@@ -186,13 +210,10 @@ def eval_cmd(
         raise SystemExit(2)
 
     tracks = []
-    try:
-        for index, pair in enumerate(pairs, start=1):
-            if not quiet:
-                status_console.print(f"[dim]({index}/{len(pairs)}) {pair.name}[/dim]")
-            tracks.append(evaluate_track(pair, engine=engine, triads_only=triads_only))
-    except EvalExtraMissing as exc:
-        raise SystemExit(str(exc)) from exc
+    for index, pair in enumerate(pairs, start=1):
+        if not quiet:
+            status_console.print(Text(f"({index}/{len(pairs)}) {pair.name}", style="dim"))
+        tracks.append(evaluate_track(pair, engine=engine, triads_only=triads_only))
 
     summary = summarise(tracks)
 
@@ -202,7 +223,9 @@ def eval_cmd(
         if csv_path:
             write_report_csv(tracks, summary, csv_path)
     except OSError as exc:
-        status_console.print(f"[red]Error:[/red] cannot write output: {exc}")
+        status_console.print(
+            Text.assemble(("Error: ", "red"), f"cannot write output: {exc}")
+        )
         raise SystemExit(2) from exc
 
     if not quiet:

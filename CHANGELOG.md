@@ -7,6 +7,55 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] — 2026-07-28
+
+Bass awareness, structural sections, and a CI leg that proves the core install
+really is standalone.
+
+### Added
+
+- Bass detection over a dedicated low-register chroma. Where one pitch class
+  clearly dominates a segment's low end and is a chord tone other than the root,
+  it is reported: `chords[].bass` in JSON (a note name), a degree slash in the
+  `.lab` export (`C:maj/3` — the spelling mir_eval parses), and `C:maj/E` in the
+  terminal and the browser. The `label` field itself stays plain.
+- `maj6` as a re-spelling. `C:maj6` and `A:min7` are the same four notes, so only
+  `min7` is a decoder state; a detected third in the bass re-spells it as the
+  sixth on that bass, in root position.
+- Structural sections on tracks over 30 seconds, via Foote checkerboard novelty
+  over a self-similarity matrix. Each section carries a local key hint and its own
+  progression, and is labelled `A`/`B`/`A'` — repetition, never "verse"/"chorus".
+  Additive `sections` key in the JSON; new `--no-sections` flag.
+- A `bare-install` CI job that installs only the core dependencies, checks every
+  skip is one of the extras it deliberately left out, and asserts each optional
+  feature prints its install hint rather than a traceback.
+- `require_eval_extra()`, mirroring `require_web_extra()`.
+
+### Changed
+
+- `estimate_key_from_chroma` takes `chords`/`use_edges` instead of
+  `chord_scores`/`chord_weight`; the evidence damping now happens inside it
+  rather than at each call site.
+- `download_url` requires `dest_dir`. The temporary-directory fallback was dead
+  code and a standing invitation to reintroduce a leak.
+- `_diatonic_chords` is derived from the scales rather than hand-listed. The
+  derived sets reproduce the old tables chord for chord, and a test pins that.
+- The JSON schema stays at `1`. All additions are additive, and the README now
+  states the contract: consumers must ignore keys they do not recognise.
+
+### Fixed
+
+- One unparseable label in a reference `.lab` no longer ends a whole `cka eval`
+  run. mir_eval parses labels when it scores, not when it loads, and raises from
+  `Exception` rather than `ValueError` — which is how this escaped the handler.
+- `cka eval` without the `[eval]` extra prints the install hint before walking
+  the dataset, instead of after listing tracks it cannot score.
+- Dataset discovery matches audio and label extensions case-insensitively, so
+  `Track.WAV` beside `Track.LAB` is a pair rather than two orphans.
+- The web module and README said the endpoint calls `analyze_audio()`; it calls
+  `analyze_source()`. The README also claimed the server binds to localhost
+  "only" rather than by default, and its `meta` example was missing three keys.
+
 ## [0.1.0] — 2026-07-28
 
 First release: offline key, chord and progression analysis for audio files and
@@ -50,5 +99,6 @@ yt-dlp-supported URLs, as a `cka` CLI, a local web UI, and a Python API.
   decode path too, rather than ffmpeg's vague "produced no audio".
 - An unwritable `--json`/`--lab` path is a clean error instead of a traceback.
 
-[Unreleased]: https://github.com/slittycode/chord-key-analyzer/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/slittycode/chord-key-analyzer/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/slittycode/chord-key-analyzer/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/slittycode/chord-key-analyzer/releases/tag/v0.1.0

@@ -137,8 +137,21 @@ def test_enharmonic_augmented_duplicates_are_collapsed():
 
 def test_state_count_matches_vocabulary():
     _, labels = build_chord_templates()
-    # 12 roots x 7 qualities, minus 8 duplicate augmented spellings, plus N.
+    # 12 roots x every quality, minus 8 duplicate augmented spellings, plus N.
     assert len(labels) == 12 * len(CHORD_QUALITIES) - 8 + 1
+
+
+def test_the_vocabulary_has_no_colliding_pitch_class_sets():
+    """Beyond the augmented triads, every state must be a distinct set of notes.
+
+    Two states with identical templates split probability mass between spellings
+    the decoder has no way to choose between; that is why sus2 and maj6 are
+    labels only, and why anything new has to be checked against this.
+    """
+    _, labels = build_chord_templates()
+    non_augmented = [label for label in labels if not label.endswith(":aug")]
+    # 12 roots x (qualities - aug), plus N.
+    assert len(non_augmented) == 12 * (len(CHORD_QUALITIES) - 1) + 1
 
 
 def test_triads_only_template_set_is_smaller():

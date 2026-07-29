@@ -118,7 +118,7 @@
 
     <div class="panel">
       <h2>Chord timeline</h2>
-      <div class="timeline-scroll"><svg id="timeline" height="112" role="img" aria-label="Chord timeline"></svg></div>
+      <div class="timeline-scroll"><svg id="timeline" height="140" role="img" aria-label="Chord and section timeline"></svg></div>
     </div>
 
     <div class="panel">
@@ -154,6 +154,27 @@ const PALETTE = [
   "#5eead4", "#c084fc", "#fbbf24", "#60a5fa", "#f472b6", "#a3e635",
   "#fb923c", "#38bdf8", "#e879f9", "#4ade80", "#facc15", "#f87171"
 ];
+
+const ROOTS = ["C","C#","D","D#","E","F","F#","G","G#","A","A#","B"];
+
+// Mirrors BASS_DEGREES in models.py: a `.lab` file names the bass by degree
+// above the root, not by note name, because that is the spelling mir_eval reads.
+const BASS_DEGREES = ["", "b2", "2", "b3", "3", "4", "b5", "5", "b6", "6", "b7", "7"];
+
+// `C:maj` + bass `E` -> `C:maj/E`, for people.
+function displayLabel(chord) {
+  return chord.bass ? `${chord.label}/${chord.bass}` : chord.label;
+}
+
+// `C:maj` + bass `E` -> `C:maj/3`, for files.
+function mirexLabel(chord) {
+  if (!chord.bass) return chord.label;
+  const root = ROOTS.indexOf(chord.label.split(":")[0]);
+  const bass = ROOTS.indexOf(chord.bass);
+  if (root < 0 || bass < 0) return chord.label;
+  const degree = BASS_DEGREES[(bass - root + 12) % 12];
+  return degree ? `${chord.label}/${degree}` : chord.label;
+}
 
 function setStatus(message, isError) {
   statusLine.textContent = message || "";
@@ -303,7 +324,7 @@ function render(result) {
     const row = document.createElement("tr");
     for (const [value, cls] of [
       [formatTime(chord.start), "num"], [formatTime(chord.end), "num"],
-      [chord.label, ""], [numeral, ""], [`${Math.round(chord.confidence * 100)}%`, "num"]
+      [displayLabel(chord), ""], [numeral, ""], [`${Math.round(chord.confidence * 100)}%`, "num"]
     ]) {
       const cell = document.createElement("td");
       cell.className = cls;
@@ -316,14 +337,14 @@ function render(result) {
 
 function colourFor(label) {
   if (label === "N") return "var(--line)";
-  const roots = ["C","C#","D","D#","E","F","F#","G","G#","A","A#","B"];
-  return PALETTE[roots.indexOf(label.split(":")[0]) % PALETTE.length] || "#888";
+  return PALETTE[ROOTS.indexOf(label.split(":")[0]) % PALETTE.length] || "#888";
 }
 
 function drawTimeline(result) {
   const svg = $("timeline");
   const width = Math.max(svg.parentElement.clientWidth - 4, 320);
-  const height = 112, laneTop = 18, laneHeight = 54;
+  const height = 140, sectionTop = 8, sectionHeight = 22;
+  const laneTop = 46, laneHeight = 54;
   const duration = result.duration || 1;
   const scale = (t) => (t / duration) * width;
 
@@ -339,6 +360,32 @@ function drawTimeline(result) {
     return node;
   };
 
+  // Sections lane. Guarded with `|| []` so a result from before sections
+  // existed still renders.
+  for (const section of result.sections || []) {
+    const x = scale(section.start);
+    const w = Math.max(scale(section.end) - x, 1);
+    // Colour by base letter, so A and A' read as related at a glance.
+    const base = section.label.replace(/'/g, "");
+    const hue = (base.charCodeAt(0) - 65) % PALETTE.length;
+    svg.appendChild(make("rect", {
+      x, y: sectionTop, width: w, height: sectionHeight, rx: 4,
+      fill: PALETTE[hue], opacity: section.label.includes("'") ? 0.3 : 0.55
+    })).appendChild(make("title", {}, [
+      section.label,
+      `${formatTime(section.start)}–${formatTime(section.end)}`,
+      section.tonic ? `${section.tonic} ${section.mode}` : null
+    ].filter(Boolean).join("  ")));
+
+    if (w > 18) {
+      svg.appendChild(make("text", {
+        x: x + w / 2, y: sectionTop + sectionHeight / 2 + 4,
+        "text-anchor": "middle", "font-size": 11, "font-weight": 700,
+        fill: "#0b0d12", "pointer-events": "none"
+      }, section.label));
+    }
+  }
+
   for (const chord of result.chords) {
     const x = scale(chord.start);
     const w = Math.max(scale(chord.end) - x, 1);
@@ -346,7 +393,7 @@ function drawTimeline(result) {
       x, y: laneTop, width: w, height: laneHeight, rx: 3,
       fill: colourFor(chord.label),
       opacity: chord.label === "N" ? 0.35 : 0.45 + 0.55 * chord.confidence
-    })).appendChild(make("title", {}, `${chord.label}  ${formatTime(chord.start)}–${formatTime(chord.end)}`));
+    })).appendChild(make("title", {}, `${displayLabel(chord)}  ${formatTime(chord.start)}–${formatTime(chord.end)}`));
 
     if (w > 26 && chord.label !== "N") {
       svg.appendChild(make("text", {
@@ -387,7 +434,7 @@ $("dl-json").addEventListener("click", () => {
 });
 $("dl-lab").addEventListener("click", () => {
   if (!lastResult) return;
-  const lines = lastResult.chords.map((c) => `${c.start.toFixed(3)}\t${c.end.toFixed(3)}\t${c.label}`);
+  const lines = lastResult.chords.map((c) => `${c.start.toFixed(3)}\t${c.end.toFixed(3)}\t${mirexLabel(c)}`);
   download("analysis.lab", lines.join("\n") + "\n", "text/plain");
 });
 

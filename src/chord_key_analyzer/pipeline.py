@@ -8,12 +8,13 @@ from pathlib import Path
 import numpy as np
 
 from . import __version__
-from .chords import get_engine
+from .chords import detect_inversions, get_engine, respell_with_bass
 from .features import DEFAULT_HOP, extract_features
 from .ingest import TARGET_SR, resolve_source
 from .key import detect_key
 from .models import AnalysisResult
 from .progression import harmonic_rhythm, summarise_progression
+from .sections import detect_sections
 
 ProgressHook = Callable[[str, float], None]
 
@@ -31,6 +32,7 @@ def analyze_audio(
     harmonic: bool = True,
     beat_snap: bool = True,
     scan_modulations: bool = True,
+    scan_sections: bool = True,
     hop_length: int = DEFAULT_HOP,
     progress: ProgressHook = _noop_progress,
 ) -> AnalysisResult:
@@ -49,12 +51,22 @@ def analyze_audio(
     # key, so there is no circularity here.
     progress("chords", 0.5)
     chords = chord_engine.analyze(features)
+    # After the engine rather than inside it: the merge and snap helpers rebuild
+    # segments from their neighbours and would drop a bass assigned earlier.
+    chords = detect_inversions(chords, features)
+    # And the re-spellings need that bass, so they come after it in turn.
+    chords = respell_with_bass(chords)
 
     progress("key", 0.75)
     key = detect_key(features, scan_modulations=scan_modulations, chords=chords)
 
     progress("progression", 0.9)
     progression = summarise_progression(chords, key)
+
+    # Last: sections want the finished chord track and the global key, so their
+    # Roman numerals are comparable with the whole-track progression above.
+    progress("sections", 0.95)
+    sections = detect_sections(features, chords, key) if scan_sections else []
 
     progress("done", 1.0)
     return AnalysisResult(
@@ -63,6 +75,7 @@ def analyze_audio(
         key=key,
         chords=chords,
         progression=progression,
+        sections=sections,
         tempo=features.tempo,
         meta={
             "engine": chord_engine.name,
@@ -84,6 +97,7 @@ def analyze_source(
     harmonic: bool = True,
     beat_snap: bool = True,
     scan_modulations: bool = True,
+    scan_sections: bool = True,
     start: float = 0.0,
     duration: float | None = None,
     progress: ProgressHook = _noop_progress,
@@ -101,6 +115,7 @@ def analyze_source(
         harmonic=harmonic,
         beat_snap=beat_snap,
         scan_modulations=scan_modulations,
+        scan_sections=scan_sections,
         progress=progress,
     )
 

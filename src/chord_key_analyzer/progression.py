@@ -59,6 +59,7 @@ _QUALITY_SUFFIX = {
     "min": "",
     "dim": "°",
     "aug": "+",
+    "maj6": "6",
     "maj7": "maj7",
     "min7": "7",
     "7": "7",

@@ -131,6 +131,79 @@ def test_chord_evidence_is_empty_without_chords():
     assert np.all(chord_evidence_scores([]) == 0)
 
 
+#: The hand-written diatonic tables the derivation replaced, frozen verbatim.
+#: Reproducing these exactly is the whole licence for deriving them instead.
+LEGACY_MAJOR_DEGREES = [
+    (0, ("maj", "maj7")),
+    (2, ("min", "min7")),
+    (4, ("min", "min7")),
+    (5, ("maj", "maj7")),
+    (7, ("maj", "7")),
+    (9, ("min", "min7")),
+    (11, ("dim",)),
+]
+LEGACY_MINOR_DEGREES = [
+    (0, ("min", "min7")),
+    (2, ("dim",)),
+    (3, ("maj", "maj7")),
+    (5, ("min", "min7")),
+    (7, ("min", "min7", "maj", "7")),
+    (8, ("maj", "maj7")),
+    (10, ("maj", "7")),
+    (11, ("dim",)),
+]
+LEGACY_QUALITIES = frozenset({"maj", "min", "dim", "aug", "maj7", "min7", "7"})
+
+
+@pytest.mark.parametrize(
+    ("mode", "legacy"), [("major", LEGACY_MAJOR_DEGREES), ("minor", LEGACY_MINOR_DEGREES)]
+)
+@pytest.mark.parametrize("tonic", [0, 5, 7, 11])
+def test_derived_diatonic_set_reproduces_the_hand_written_table(mode, legacy, tonic):
+    """Restricted to the original vocabulary, the derivation must agree exactly.
+
+    The minor case is the one that matters: merging natural and harmonic minor
+    into a single eight-note collection derives three chords neither scale
+    contains — iv°, bVI° and bvi — because it lets a natural-minor sixth degree
+    sit under a harmonic-minor leading tone.  Stacking thirds on each scale
+    separately does not.
+    """
+    from chord_key_analyzer.key import _diatonic_chords
+
+    expected = {((tonic + degree) % 12, quality) for degree, qualities in legacy
+                for quality in qualities}
+    derived = {
+        (root, quality)
+        for root, quality in _diatonic_chords(tonic, mode)
+        if quality in LEGACY_QUALITIES
+    }
+    assert derived == expected
+
+
+def test_the_derivation_extends_to_the_new_qualities():
+    """C6, F6 and G6 are all plainly in C major, and now score as in-key.
+
+    The added sixth is not a tertian stack, so it comes from the second half of
+    the derivation: every note of it belongs to the scale.
+    """
+    from chord_key_analyzer.key import _diatonic_chords
+
+    in_c_major = _diatonic_chords(0, "major")
+    assert {(0, "maj6"), (5, "maj6"), (7, "maj6")} <= in_c_major
+    # D6 would need an F#, so it is not in the key.
+    assert (2, "maj6") not in in_c_major
+
+
+def test_augmented_triads_are_never_diatonic():
+    """III+ is a tertian triad of the harmonic minor, but an augmented chord is
+    a chromatic colour wherever it sits — counting it in-key would let whole-tone
+    planing score as tonal."""
+    from chord_key_analyzer.key import _diatonic_chords
+
+    for mode in ("major", "minor"):
+        assert not any(quality == "aug" for _, quality in _diatonic_chords(0, mode))
+
+
 def test_modulation_is_detected_and_localised():
     first = fx.render_progression(build_progression("C", MAJOR_DEGREES), 2.0, 4)
     second = fx.render_progression(build_progression("E", MAJOR_DEGREES), 2.0, 4)
@@ -203,6 +276,64 @@ def test_thin_evidence_pulls_the_scan_less_than_undamped():
     undamped = key_module.KEY_CHORD_WEIGHT * margin
     damped = key_module.KEY_CHORD_WEIGHT * support * margin
     assert damped < undamped / 2
+
+
+def test_estimate_key_consults_the_evidence_damping(monkeypatch):
+    """The damping lives inside the key seam now, so every caller inherits it.
+
+    Both the global key and the modulation scan used to apply it themselves,
+    which is exactly the arrangement that let the two drift apart.
+    """
+    from chord_key_analyzer import key as key_module
+    from chord_key_analyzer.models import ChordSegment
+
+    calls: list[int] = []
+    original = key_module._evidence_support
+
+    def recording_support(segments):
+        calls.append(len(segments))
+        return original(segments)
+
+    monkeypatch.setattr(key_module, "_evidence_support", recording_support)
+    key_module.estimate_key_from_chroma(
+        np.ones(12), chords=[ChordSegment(0, 2, "C:maj"), ChordSegment(2, 4, "G:maj")]
+    )
+
+    assert calls == [2], "estimate_key_from_chroma did not damp the chord evidence"
+
+
+def test_thin_evidence_pulls_the_global_key_less_than_undamped():
+    """Counterpart to the modulation-path test above, for the global key seam.
+
+    Asserted on the score gap rather than on the winning key, and for the same
+    reason: one sustained G against a pure C-major profile still carries the
+    estimate even damped.  What the damping controls is by how much — one
+    distinct chord is a third of full support, so a third of the pull.
+    """
+    from chord_key_analyzer import key as key_module
+    from chord_key_analyzer.models import ChordSegment
+
+    chroma = np.zeros(12)
+    for pitch_class in (0, 2, 4, 5, 7, 9, 11):
+        chroma[pitch_class] = 1.0
+    chroma[0] += 0.8  # tonic emphasis, as in the profile test above
+    sustained = [ChordSegment(0.0, 45.0, "G:maj")]
+
+    best, _, alternatives = estimate_key_from_chroma(chroma, chords=sustained)
+    scores = {best.name: best.score, **{alt.name: alt.score for alt in alternatives}}
+    gap = scores["G major"] - scores["C major"]
+
+    g_index = key_module._TEMPLATE_NAMES.index(("G", "major"))
+    c_index = key_module._TEMPLATE_NAMES.index(("C", "major"))
+    profile = key_module._standardise(key_module.score_chroma_vector(chroma))
+    evidence = key_module._standardise(key_module.chord_evidence_scores(sustained))
+    profile_margin = profile[g_index] - profile[c_index]
+    evidence_margin = evidence[g_index] - evidence[c_index]
+
+    damped = profile_margin + key_module.KEY_CHORD_WEIGHT * (1 / 3) * evidence_margin
+    undamped = profile_margin + key_module.KEY_CHORD_WEIGHT * evidence_margin
+    assert gap == pytest.approx(damped)
+    assert gap < undamped / 2
 
 
 def test_no_chord_evidence_leaves_the_scan_untouched():

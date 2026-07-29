@@ -61,6 +61,40 @@ def test_every_vocabulary_label_parses_in_mir_eval():
     mir_eval.chord.encode("N")
 
 
+def test_every_slash_label_parses_in_mir_eval():
+    """Same proof, extended over every chord tone a slash can name."""
+    import mir_eval
+
+    from chord_key_analyzer.models import CHORD_QUALITIES, ChordSegment, chord_label
+
+    for root in range(12):
+        for quality, intervals in CHORD_QUALITIES.items():
+            for interval in intervals:
+                bass = fx.PITCH_CLASSES[(root + interval) % 12]
+                segment = ChordSegment(0.0, 1.0, chord_label(root, quality), 1.0, bass=bass)
+                mir_eval.chord.encode(segment.mirex_label)
+
+
+def test_a_slash_reference_still_scores_the_plain_estimate(tmp_path):
+    """Bass is not part of what root/majmin measure, so a reference written with
+    inversions must not penalise an analyzer that reports the chord alone."""
+    audio = fx.render_progression(fx.POP_LOOP_C, chord_duration=2.0, repeats=3)
+    fx.write_wav(tmp_path / "pop.wav", audio)
+
+    lines, time = [], 0.0
+    for _ in range(3):
+        for label in ["C:maj/3", "G:maj/5", "A:min/b3", "F:maj/3"]:
+            lines.append(f"{time:.6f}\t{time + 2.0:.6f}\t{label}")
+            time += 2.0
+    (tmp_path / "pop.lab").write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+    pairs, _ = discover_pairs(tmp_path)
+    evaluation = evaluate_track(pairs[0])
+    assert evaluation.ok, evaluation.error
+    assert evaluation.chord_scores["root"] >= 0.75, evaluation.chord_scores
+    assert evaluation.chord_scores["majmin"] >= 0.75, evaluation.chord_scores
+
+
 def test_evaluate_track_scores_the_pop_fixture(pop_dataset):
     """End-to-end: a known rendering against hand-written truth must score high."""
     pairs, orphans = discover_pairs(pop_dataset)
@@ -132,6 +166,28 @@ def test_key_lab_is_not_mistaken_for_a_chord_annotation(tmp_path):
     assert pairs[0].key is not None and pairs[0].key.name == "song.key.lab"
 
 
+def test_discovery_matches_case_insensitive_extensions(tmp_path):
+    """`Track.LAB` beside `Track.WAV` is a pair, not two orphans."""
+    fx.write_wav(tmp_path / "song.WAV", fx.render_progression(fx.POP_LOOP_C, 0.5, 1))
+    write_pop_lab(tmp_path / "song.LAB", chord_duration=0.5, repeats=1)
+    (tmp_path / "song.KEY").write_text("C major\n", encoding="utf-8")
+
+    pairs, orphans = discover_pairs(tmp_path)
+    assert orphans == []
+    assert len(pairs) == 1
+    assert pairs[0].audio.name == "song.WAV"
+    assert pairs[0].key is not None and pairs[0].key.name == "song.KEY"
+
+
+def test_discovery_matches_a_mixed_case_audio_extension(tmp_path):
+    fx.write_wav(tmp_path / "song.Wav", fx.render_progression(fx.POP_LOOP_C, 0.5, 1))
+    write_pop_lab(tmp_path / "song.lab", chord_duration=0.5, repeats=1)
+
+    pairs, orphans = discover_pairs(tmp_path)
+    assert orphans == []
+    assert [p.audio.name for p in pairs] == ["song.Wav"]
+
+
 def test_a_lab_without_audio_is_skipped_not_fatal(tmp_path):
     fx.write_wav(tmp_path / "good.wav", fx.render_progression(fx.POP_LOOP_C, 0.5, 1))
     write_pop_lab(tmp_path / "good.lab", chord_duration=0.5, repeats=1)
@@ -178,6 +234,45 @@ def test_undecodable_audio_is_recorded_not_raised(tmp_path):
     evaluation = evaluate_track(pairs[0])
     assert not evaluation.ok
     assert evaluation.error
+
+
+def test_an_unparseable_reference_label_is_recorded_not_raised(tmp_path):
+    """A bad line in a hand-made .lab must cost that track, not the corpus.
+
+    `load_labeled_intervals` reads a label file without validating it, so the
+    first thing to parse `C:notachord` is the scorer — and it raises from
+    `Exception`, not `ValueError`, which is what made this escape the handler.
+    """
+    fx.write_wav(tmp_path / "good.wav", fx.render_progression(fx.POP_LOOP_C, 0.5, 1))
+    write_pop_lab(tmp_path / "good.lab", chord_duration=0.5, repeats=1)
+    fx.write_wav(tmp_path / "bad.wav", fx.render_progression(fx.POP_LOOP_C, 0.5, 1))
+    (tmp_path / "bad.lab").write_text("0.000000\t2.000000\tC:notachord\n", encoding="utf-8")
+
+    pairs, _ = discover_pairs(tmp_path)
+    tracks = [evaluate_track(pair) for pair in pairs]
+    by_name = {track.name: track for track in tracks}
+
+    assert not by_name["bad"].ok
+    assert "chord scoring failed" in by_name["bad"].error
+    assert by_name["good"].ok, by_name["good"].error
+
+    summary = summarise(tracks)
+    assert (summary["scored"], summary["failed"]) == (1, 1)
+
+
+def test_key_scoring_failure_is_recorded_not_raised(pop_dataset, monkeypatch):
+    """mir_eval owns the last word on a key string; its verdict must not be fatal."""
+    import mir_eval
+
+    def boom(reference, estimate):
+        raise ValueError("Key H is invalid")
+
+    monkeypatch.setattr(mir_eval.key, "weighted_score", boom)
+
+    pairs, _ = discover_pairs(pop_dataset)
+    evaluation = evaluate_track(pairs[0])
+    assert not evaluation.ok
+    assert "key scoring failed" in evaluation.error
 
 
 def test_empty_chord_result_still_scores(tmp_path, monkeypatch):

@@ -7,7 +7,7 @@ through JSON needs a matching entry in :meth:`AnalysisResult.to_dict`.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any
 
 SCHEMA_VERSION = 1
@@ -26,11 +26,55 @@ CHORD_QUALITIES: dict[str, tuple[int, ...]] = {
     "7": (0, 4, 7, 10),
 }
 
+# Four further qualities were measured against this vocabulary and rejected.
+# Each is recorded here so the next person does not have to measure it twice:
+#
+# * ``sus4`` (0,5,7) is collision-free, decodes its own renders 7 roots out of 7,
+#   and changes no label on any existing fixture — and still fails.  A suspended
+#   template is too good a match for melody: two stepwise notes blurred together
+#   by the chroma median filter, plus their fifths, *are* a sus chord, so a bare
+#   scale decodes as a sus4 on every degree and the key evidence collapses with
+#   it (A minor read as C major, D minor as F major).  Held out until the
+#   emission model can tell a sounding fourth from a passing one.
+# * ``hdim7`` (0,3,6,10) is collision-free but loses its own renders to the plain
+#   diminished triad at all 12 roots — the dim triad's partials already energise
+#   the flat seventh's bin.
+# * ``dim7`` (0,3,6,9) is symmetric: three distinct sets across twelve roots, so
+#   the canonical root is arbitrary without a confident bass.
+# * ``min6`` is enharmonically ``hdim7``, which is not here to be re-spelled from.
+
+#: Qualities that exist only as *labels*, never as decoder states, because each
+#: shares its exact pitch-class set with a state: C:maj6 is A:min7 at every root.
+#: A template decoder cannot choose between two identical templates — it would
+#: keep whichever spelling the deduplication happened to see first — so these are
+#: assigned afterwards from the bass, the one thing that does tell them apart.
+#: See :func:`~chord_key_analyzer.chords.respell_with_bass`.
+RESPELLED_QUALITIES: dict[str, tuple[int, ...]] = {
+    "maj6": (0, 4, 7, 9),
+}
+
 #: The subset used when ``--triads-only`` is passed.
 TRIAD_QUALITIES = ("maj", "min", "dim", "aug")
 
 #: Label for the "no chord" state (silence, percussion, ambiguous texture).
 NO_CHORD = "N"
+
+#: Interval above the root (in semitones) -> the MIREX degree that names it, for
+#: slash chords.  0 has no entry on purpose: a bass on the root is root position,
+#: which is written without a slash at all.
+BASS_DEGREES = {
+    1: "b2",
+    2: "2",
+    3: "b3",
+    4: "3",
+    5: "4",
+    6: "b5",
+    7: "5",
+    8: "b6",
+    9: "6",
+    10: "b7",
+    11: "7",
+}
 
 
 def chord_label(root: int, quality: str) -> str:
@@ -115,12 +159,25 @@ class KeyEstimate:
 
 @dataclass(frozen=True)
 class ChordSegment:
-    """A single chord occupying ``[start, end)`` seconds of the track."""
+    """A single chord occupying ``[start, end)`` seconds of the track.
+
+    ``label`` never carries the bass.  Everything that reads a label — the
+    parser, the Roman-numeral writer, the key evidence term, the web timeline —
+    is about the chord itself, and a slash in there would mean teaching all of
+    them to strip it.  The bass lives in its own field, and the two are combined
+    only where a combined form is wanted (see :attr:`mirex_label` and
+    :attr:`display_label`).
+    """
 
     start: float
     end: float
     label: str
     confidence: float = 0.0
+    #: Pitch class of the sounding bass note, when it is a chord tone other than
+    #: the root and the low end was clear enough to be sure.  ``None`` otherwise
+    #: — including for root-position chords, which need no slash.  Last, and with
+    #: a default, so existing positional constructors keep working.
+    bass: str | None = None
 
     @property
     def duration(self) -> float:
@@ -130,13 +187,62 @@ class ChordSegment:
     def is_no_chord(self) -> bool:
         return self.label == NO_CHORD
 
+    @property
+    def bass_degree(self) -> str | None:
+        """The bass as a degree above the root (``"3"``, ``"b7"``), or ``None``."""
+        if self.bass is None:
+            return None
+        parsed = parse_chord_label(self.label)
+        if parsed is None:
+            return None
+        try:
+            bass_pc = PITCH_CLASSES.index(self.bass)
+        except ValueError:
+            return None
+        return BASS_DEGREES.get((bass_pc - parsed[0]) % 12)
+
+    @property
+    def mirex_label(self) -> str:
+        """Label for a ``.lab`` file, where a slash bass is written as a *degree*.
+
+        ``C:maj/E`` is not a label mir_eval will parse; ``C:maj/3`` is.  Degrees
+        are what the annotation format speaks, so exports use this form and
+        round-trip cleanly through mir_eval.
+        """
+        degree = self.bass_degree
+        return self.label if degree is None else f"{self.label}/{degree}"
+
+    @property
+    def display_label(self) -> str:
+        """Label as a musician writes it, ``C:maj/E`` — for humans, not files."""
+        return self.label if self.bass is None else f"{self.label}/{self.bass}"
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "start": round(self.start, 3),
             "end": round(self.end, 3),
             "label": self.label,
             "confidence": round(self.confidence, 4),
+            "bass": self.bass,
         }
+
+
+def clip_segments(
+    segments: list[ChordSegment], start: float, end: float
+) -> list[ChordSegment]:
+    """The parts of ``segments`` sounding inside ``[start, end)``, trimmed to it.
+
+    Times stay absolute; only the extents move.  Anything that scores a span of
+    the track — a modulation window, a section — needs each chord weighted by how
+    long it sounds *within* that span, not by its full length.
+    """
+    clipped = []
+    for segment in segments:
+        overlap_start = max(segment.start, start)
+        overlap_end = min(segment.end, end)
+        if overlap_end > overlap_start:
+            clipped.append(replace(segment, start=overlap_start, end=overlap_end))
+    return clipped
 
 
 @dataclass(frozen=True)
@@ -176,6 +282,46 @@ class ProgressionSummary:
 
 
 @dataclass(frozen=True)
+class Section:
+    """One structural span of the track, with its own local harmony.
+
+    ``label`` is a bare letter — ``A``, ``B``, ``A'`` — and says nothing about
+    musical function on purpose.  What the detector measures is repetition: that
+    this stretch resembles that one.  Calling a span "chorus" would be a claim
+    about song form that no self-similarity analysis can support.
+    """
+
+    start: float
+    end: float
+    label: str
+    tonic: str | None = None
+    mode: str | None = None
+    key_confidence: float | None = None
+    progression: ProgressionSummary | None = None
+
+    @property
+    def duration(self) -> float:
+        return self.end - self.start
+
+    @property
+    def key_name(self) -> str | None:
+        return None if self.tonic is None else f"{self.tonic} {self.mode}"
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "start": round(self.start, 3),
+            "end": round(self.end, 3),
+            "label": self.label,
+            "tonic": self.tonic,
+            "mode": self.mode,
+            "key_confidence": (
+                None if self.key_confidence is None else round(self.key_confidence, 4)
+            ),
+            "progression": self.progression.to_dict() if self.progression else None,
+        }
+
+
+@dataclass(frozen=True)
 class AnalysisResult:
     """Everything the pipeline produces for one track."""
 
@@ -186,6 +332,7 @@ class AnalysisResult:
     progression: ProgressionSummary
     tempo: float | None = None
     meta: dict[str, Any] = field(default_factory=dict)
+    sections: list[Section] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -196,5 +343,6 @@ class AnalysisResult:
             "key": self.key.to_dict(),
             "chords": [c.to_dict() for c in self.chords],
             "progression": self.progression.to_dict(),
+            "sections": [s.to_dict() for s in self.sections],
             "meta": dict(self.meta),
         }

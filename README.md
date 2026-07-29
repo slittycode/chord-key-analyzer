@@ -83,7 +83,7 @@ cka analyze 'https://www.youtube.com/watch?v=...'   # needs the [url] extra
 ```
 
 Useful flags: `--no-hpss` (skip harmonic/percussive separation — faster, less accurate on
-drum-heavy material), `--no-beat-snap`, `--no-modulations`, `--quiet`.
+drum-heavy material), `--no-beat-snap`, `--no-modulations`, `--no-sections`, `--quiet`.
 
 `cka eval` scores the analyzer against reference annotations — see
 [Measuring accuracy](#measuring-accuracy).
@@ -97,9 +97,9 @@ cka web --no-urls  # uploads only, no URL ingestion
 
 Drag in a file or paste a URL and you get the key card, an SVG chord timeline, the
 progression, and download links for the JSON and `.lab`. It is one static page with
-inline vanilla JS — no React, no node, no build step — and it binds to localhost only.
-The endpoint calls the exact same `analyze_audio()` the CLI does, so the two can never
-disagree.
+inline vanilla JS — no React, no node, no build step — and it binds to localhost by
+default. The endpoint calls the exact same `analyze_source()` the CLI does, so the two
+can never disagree.
 
 **URL ingestion and non-loopback binds.** The server has no authentication, so URL input
 — the one feature that makes it fetch on someone else's behalf — is enabled only when you
@@ -141,26 +141,34 @@ DRM-free m4a), analyse that file directly — it works like any other local file
 ## How it works
 
 ```
-audio ──▶ decode 22.05 kHz mono ──▶ tuning estimate ──▶ HPSS ──▶ CQT chroma
-                                                                     │
-                        ┌────────────────────────────────────────────┤
-                        ▼                                            ▼
-              chord templates + Viterbi                       beat tracking
-                        │                                            │
-                        ├──────────────▶ chord timeline ◀────────────┘
-                        │                                (optional boundary snap)
+audio ──▶ decode 22.05 kHz mono ──▶ tuning estimate ──▶ HPSS ──┬──▶ CQT chroma
+                                                              │        │
+                                                              └──▶ bass chroma
+                                                                       │
+                        ┌──────────────────────────────────────────────┤
+                        ▼                                              ▼
+              chord templates + Viterbi                        beat tracking
+                        │                                              │
+                        ├───────────────▶ chord timeline ◀─────────────┘
+                        │                        │       (optional boundary snap)
+                        │                        ▼
+                        │            bass ──▶ inversions, re-spellings
                         ▼
        key: profile correlation + chord evidence ──▶ Roman numerals, loop detection
+                        │
+                        └──▶ self-similarity novelty ──▶ sections
 ```
 
 1. **Decode** to mono 22.05 kHz — via libsndfile where possible, otherwise an ffmpeg pipe
    to raw PCM (which sidesteps `audioread`'s backend roulette).
 2. **Tuning estimate** so slightly detuned recordings don't smear the chroma bins.
 3. **Harmonic/percussive separation**, then **CQT chroma** at 36 bins/octave. Percussion
-   otherwise splashes energy across every pitch class at once.
+   otherwise splashes energy across every pitch class at once. One separation feeds two
+   chromas: the full-range one, and a second over the bass register alone.
 4. **Chords**: each frame is scored against harmonically-weighted templates for 12 roots ×
    7 qualities (plus a no-chord state), then **Viterbi-decoded** with a sticky
-   self-transition so the output doesn't flicker frame to frame.
+   self-transition so the output doesn't flicker frame to frame. The bass chroma then
+   supplies inversions and re-spellings (see [Inversions](#inversions)).
 5. **Key**: Krumhansl-Schmuckler and Temperley profiles are correlated against the pooled
    chroma **and combined with evidence from the detected chords**. That second term is
    what resolves relative major/minor — A minor and C major contain identical pitch
@@ -171,6 +179,8 @@ audio ──▶ decode 22.05 kHz mono ──▶ tuning estimate ──▶ HPSS �
    phantom key changes.
 7. **Progression**: chords become Roman numerals in the detected key (borrowed chords are
    written literally, e.g. `bVII`), and n-gram scanning finds the dominant repeating loop.
+8. **Sections**: a self-similarity matrix over 1 s feature blocks is scanned with a Foote
+   checkerboard kernel, and the peaks of the resulting novelty curve are the boundaries.
 
 ### Chord vocabulary
 
@@ -180,6 +190,74 @@ Labels are MIREX-style: `C:maj`, `F#:min7`, `N`.
 Augmented triads repeat every four semitones, so `C:aug`, `E:aug` and `G#:aug` are one
 and the same pitch-class set. Chroma carries no bass information to tell them apart, so
 only the lowest-root spelling is a decoder state.
+
+`maj6` is an eighth label, and it is never a decoder *state*. `C:maj6` and `A:min7` are
+the same four notes at every root, so no chroma-only decoder can choose between them —
+there is nothing to choose between. Only `min7` is a state; when the detected bass says
+the third is what's sounding underneath, the chord is re-spelled as the sixth on that
+bass (`A:min7` over C becomes `C:maj6`, in root position). This has a real edge: a bass
+loud enough to dominate the chroma re-roots the decode to a plain major triad before the
+rule can apply, which is itself a fair name for those notes.
+
+**Qualities that were measured and rejected.** Adding a quality is gated on evidence, not
+plausibility. Each of these was implemented, measured, and dropped:
+
+| Quality | Why not |
+| --- | --- |
+| `sus4` | Passes every obvious check — collision-free, decodes its own renders at 7 roots out of 7, changes no existing label — and still fails. A suspended template is too good a match for *melody*: two stepwise notes blurred together by the chroma median filter, plus their fifths, **are** a sus chord. A bare scale decodes as a sus4 on every degree, and key detection on melodic material goes with it (A minor read as C major). |
+| `hdim7` | Loses its own renders to the plain diminished triad at all 12 roots — the dim triad's partials already energise the flat seventh's bin. |
+| `dim7` | Symmetric: three distinct pitch-class sets across twelve roots, so the canonical root is arbitrary without a confident bass. |
+| `min6` | Enharmonically `hdim7`, which is not here to be re-spelled from. |
+| `7sus4` | mir_eval does not parse the label, so it would break `.lab` round-trips. |
+
+### Inversions
+
+A second CQT chroma is computed over the bass register alone (three octaves up from C1).
+Where one pitch class clearly dominates a segment's low end, and that note is a chord tone
+other than the root, it is reported as the bass.
+
+The bass is a separate field, not part of the label. `label` stays `"C:maj"` and `bass`
+carries `"E"`, so every existing consumer of a label keeps working unchanged. The two are
+combined only where a combined form is wanted:
+
+| Where | Form | Why |
+| --- | --- | --- |
+| JSON `chords[].bass` | `"E"` | a note name is what a consumer wants |
+| `.lab` export | `C:maj/3` | MIREX names the bass by *degree*; `C:maj/E` is not a label mir_eval parses |
+| Terminal and web | `C:maj/E` | how a musician writes it |
+
+Three conditions must all hold before a bass is reported: over half the segment's frames
+carry a clearly dominant low note, those frames agree on which one, and it is a chord tone
+other than the root. Each exists to make the failure mode "no slash" rather than "a wrong
+slash" — a low note outside the chord is a passing bass or a detector error, and neither is
+worth a confident `/b6`. Expect real recordings to fail these more often than clean studio
+material does.
+
+Note the limit this does *not* lift: the chord's **root** is still decided by chroma alone.
+A first-inversion C major and an A minor seventh share three pitch classes, and adding bass
+information to the reporting does not change which one the template decoder picks.
+
+### Sections
+
+Tracks longer than 30 seconds are split into structural spans, each reported with its own
+local key hint and progression.
+
+Labels are bare letters — `A`, `B`, `A'` — and that is deliberate. What the method
+measures is **repetition**: this stretch resembles that one, and a primed letter means it
+resembles it loosely. Which repeated span is the "chorus" is a question about song form
+that no self-similarity analysis can answer, so the labels do not pretend to. If you want
+verse/chorus naming, this gives you the boundaries to hang it on, not the names.
+
+Roman numerals inside a section stay relative to the **track's** key, not the section's
+own. The point of listing them per section is to compare sections with each other, and
+renumbering each against its own tonic would make two identical progressions look
+different.
+
+Blocks are a fixed 1 second rather than beat-synchronous. Sections are ±2–4 second
+objects, so beat resolution buys nothing real, and beat-syncing would couple section
+detection to beat-tracker quality on exactly the rubato material where the grid is least
+trustworthy — the same reasoning that keeps the chord decoder frame-based. Pass
+`--no-sections` to skip the scan.
 
 ## Accuracy expectations
 
@@ -192,8 +270,14 @@ This is a chroma-template system, and it is honest about what that means:
 - **Approximate**: fast classical harmony, heavy chromaticism, and rubato playing where
   beat tracking gives up (the pipeline detects this and falls back rather than trusting a
   bad grid).
-- **Not modelled**: inversions and bass notes, suspensions, 6ths, 9ths and other
-  extensions, key changes shorter than about 30 seconds.
+- **Partly modelled**: inversions. The sounding bass note is detected and reported when
+  the low end is unambiguous (see [Inversions](#inversions)), but the chord's root is
+  still chosen from chroma alone.
+- **Partly modelled**: 6th chords, which are reported only when the bass resolves them
+  against the minor seventh they share their notes with.
+- **Not modelled**: suspensions, 9ths and other extensions, key changes shorter than
+  about 30 seconds. See [Chord vocabulary](#chord-vocabulary) for why suspensions in
+  particular are held out.
 
 Confidence values are real signals, not decoration — treat anything below ~0.4 as the
 analyzer telling you it is unsure. Chord confidences are posterior probabilities across
@@ -266,6 +350,10 @@ an unimplemented engine fails loudly rather than silently falling back.
 
 Versioned via `"schema": 1`.
 
+**Additive-change contract.** New keys may be added within a schema version; keys are
+never removed or repurposed without the version changing. Consumers must ignore keys they
+do not recognise.
+
 ```json
 {
   "schema": 1,
@@ -278,7 +366,8 @@ Versioned via `"schema": 1`.
     "modulations": [{"start": 25.0, "end": 60.0, "tonic": "E", "mode": "major",
                      "confidence": 0.71}]
   },
-  "chords": [{"start": 0.0, "end": 2.04, "label": "C:maj", "confidence": 0.41}],
+  "chords": [{"start": 0.0, "end": 2.04, "label": "C:maj", "confidence": 0.41,
+              "bass": null}],
   "progression": {
     "roman": ["I", "V", "vi", "IV"],
     "labels": ["C:maj", "G:maj", "A:min", "F:maj"],
@@ -286,10 +375,20 @@ Versioned via `"schema": 1`.
                   "roman": ["I", "V", "vi", "IV"], "repeats": 3,
                   "start": 0.0, "end": 24.0}
   },
-  "meta": {"engine": "template", "version": "0.1.0", "tuning": 0.0,
-           "beats_reliable": true, "harmonic_rhythm": 2.0}
+  "sections": [{"start": 0.0, "end": 32.0, "label": "A", "tonic": "C", "mode": "major",
+                "key_confidence": 0.79,
+                "progression": {"roman": ["I", "V", "vi", "IV"],
+                                "labels": ["C:maj", "G:maj", "A:min", "F:maj"],
+                                "main_loop": null}}],
+  "meta": {"engine": "template", "version": "0.2.0", "sample_rate": 22050,
+           "hop_length": 2048, "tuning": 0.0, "beats_reliable": true,
+           "harmonic_rhythm": 2.0, "triads_only": false}
 }
 ```
+
+`meta` also carries `"offset"` — the `--start` value in seconds — but only when an
+excerpt was analysed. Every reported time is relative to the excerpt, so a consumer
+comparing against annotations for the full track adds it to each timestamp.
 
 ## Privacy
 

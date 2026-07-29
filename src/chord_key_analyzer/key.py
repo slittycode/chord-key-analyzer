@@ -25,11 +25,14 @@ import numpy as np
 from .chords import viterbi_decode
 from .features import Features
 from .models import (
+    CHORD_QUALITIES,
     PITCH_CLASSES,
+    RESPELLED_QUALITIES,
     ChordSegment,
     KeyCandidate,
     KeyEstimate,
     Modulation,
+    clip_segments,
     parse_chord_label,
 )
 
@@ -132,20 +135,23 @@ def _confidence(scores: np.ndarray) -> float:
 def estimate_key_from_chroma(
     chroma_vector: np.ndarray,
     n_alternatives: int = 3,
-    chord_scores: np.ndarray | None = None,
-    chord_weight: float = KEY_CHORD_WEIGHT,
+    chords: list[ChordSegment] | None = None,
+    use_edges: bool = True,
 ) -> tuple[KeyCandidate, float, list[KeyCandidate]]:
     """Best key, its confidence, and the runners-up for one pooled chroma vector.
 
-    When ``chord_scores`` is supplied (from :func:`chord_evidence_scores`) it is
-    blended into the profile correlations.  This is what separates a key from
-    its relative major/minor: the two share an identical pitch-class content, so
-    no amount of chroma pooling can tell them apart, but which chord functions as
+    When ``chords`` is supplied, the chord evidence is blended in (see
+    :func:`_blend_chord_evidence`).  That is what separates a key from its
+    relative major/minor: the two share an identical pitch-class content, so no
+    amount of chroma pooling can tell them apart, but which chord functions as
     home is decisive and shows up plainly in the chord track.
+
+    ``use_edges`` is passed through to :func:`chord_evidence_scores`; turn it off
+    for an arbitrary excerpt, whose first and last chords are not structural.
     """
     scores = _standardise(score_chroma_vector(chroma_vector))
-    if chord_scores is not None:
-        scores = scores + chord_weight * _standardise(chord_scores)
+    if chords:
+        scores = _blend_chord_evidence(scores, chords, use_edges=use_edges)
     order = np.argsort(scores)[::-1]
 
     best_index = int(order[0])
@@ -162,39 +168,83 @@ def estimate_key_from_chroma(
     return best, _confidence(scores), alternatives
 
 
+#: Scale degrees as semitones above the tonic.  A minor key gets both scales
+#: rather than one merged set, so a v and a V (and a subtonic bVII alongside a
+#: leading-tone vii°) all count as in-key — which is how minor-key music actually
+#: behaves.  Merging them into a single eight-note collection would be wrong in a
+#: subtler way: it admits chords like F-G#-B in A minor, whose G# and B belong to
+#: the harmonic minor while its F only makes sense against the natural one.
+MAJOR_SCALE = frozenset({0, 2, 4, 5, 7, 9, 11})
+NATURAL_MINOR_SCALE = frozenset({0, 2, 3, 5, 7, 8, 10})
+HARMONIC_MINOR_SCALE = frozenset({0, 2, 3, 5, 7, 8, 11})
+
+MODE_SCALES: dict[str, tuple[frozenset[int], ...]] = {
+    "major": (MAJOR_SCALE,),
+    "minor": (NATURAL_MINOR_SCALE, HARMONIC_MINOR_SCALE),
+}
+
+#: Qualities built by stacking thirds, which is how the diatonic triads and
+#: sevenths of a scale are generated.  Augmented is deliberately absent: III+
+#: really is the tertian triad on the harmonic minor's third degree, but an
+#: augmented triad is a chromatic colour wherever it turns up, and counting it as
+#: in-key would hand key evidence to the one chord that says least about the key.
+_TERTIAN_QUALITIES = {
+    quality: CHORD_QUALITIES[quality]
+    for quality in ("maj", "min", "dim", "maj7", "min7", "7")
+}
+
+#: The rest — suspensions and the added sixth.  These are not tertian stacks, so
+#: the question for them is simply whether every note is in the scale.
+_ADDED_QUALITIES = {
+    quality: intervals
+    for quality, intervals in {**CHORD_QUALITIES, **RESPELLED_QUALITIES}.items()
+    if quality not in _TERTIAN_QUALITIES and quality != "aug"
+}
+
+
+def _tertian_chords(scale: frozenset[int]) -> set[tuple[int, str]]:
+    """Triads and sevenths built by stacking thirds on each degree of ``scale``."""
+    degrees = sorted(scale)
+    found: set[tuple[int, str]] = set()
+    for index, root in enumerate(degrees):
+        stacked = [degrees[(index + step) % len(degrees)] for step in (0, 2, 4, 6)]
+        for size in (3, 4):
+            intervals = tuple(sorted((note - root) % 12 for note in stacked[:size]))
+            for quality, expected in _TERTIAN_QUALITIES.items():
+                if intervals == tuple(sorted(expected)):
+                    found.add((root, quality))
+    return found
+
+
+def _added_chords(scale: frozenset[int]) -> set[tuple[int, str]]:
+    """Non-tertian chords all of whose notes belong to ``scale``."""
+    return {
+        (degree, quality)
+        for degree in scale
+        for quality, intervals in _ADDED_QUALITIES.items()
+        if all((degree + interval) % 12 in scale for interval in intervals)
+    }
+
+
+# Derived once at import: the answer depends only on the vocabulary.
+_DIATONIC_DEGREES = {
+    mode: frozenset().union(
+        *(_tertian_chords(scale) | _added_chords(scale) for scale in scales)
+    )
+    for mode, scales in MODE_SCALES.items()
+}
+
+
 def _diatonic_chords(tonic: int, mode: str) -> set[tuple[int, str]]:
     """The ``(root_pc, quality)`` pairs that belong to a key.
 
-    The minor set covers both natural and harmonic minor, so a v and a V (and a
-    subtonic bVII alongside a leading-tone vii°) all count as in-key — which is
-    how minor-key music actually behaves.
+    Derived rather than listed by hand.  The hand-written tables this replaces
+    said exactly the same thing for the original seven qualities — a test pins
+    that they still agree, chord for chord — but a table has to be extended by
+    hand every time the vocabulary grows, and a derivation does not.
     """
-    if mode == "major":
-        degrees = [
-            (0, ("maj", "maj7")),
-            (2, ("min", "min7")),
-            (4, ("min", "min7")),
-            (5, ("maj", "maj7")),
-            (7, ("maj", "7")),
-            (9, ("min", "min7")),
-            (11, ("dim",)),
-        ]
-    else:
-        degrees = [
-            (0, ("min", "min7")),
-            (2, ("dim",)),
-            (3, ("maj", "maj7")),
-            (5, ("min", "min7")),
-            (7, ("min", "min7", "maj", "7")),
-            (8, ("maj", "maj7")),
-            (10, ("maj", "7")),
-            (11, ("dim",)),
-        ]
-    return {
-        ((tonic + degree) % 12, quality)
-        for degree, qualities in degrees
-        for quality in qualities
-    }
+    degrees = _DIATONIC_DEGREES["minor" if mode == "minor" else "major"]
+    return {((tonic + degree) % 12, quality) for degree, quality in degrees}
 
 
 def _tonic_qualities(mode: str) -> tuple[str, ...]:
@@ -272,6 +322,25 @@ def chord_evidence_scores(
     return scores
 
 
+def _blend_chord_evidence(
+    scores: np.ndarray, chords: list[ChordSegment], use_edges: bool
+) -> np.ndarray:
+    """Add the damped chord-evidence term to standardised profile ``scores``.
+
+    The one place the evidence weight is applied.  Both callers — the global key
+    and each modulation window — need the same three things done in the same
+    order (score the chords, standardise, damp by how many distinct chords back
+    it), and keeping that here is what stops the two paths from drifting apart
+    the way they did when each did its own blending.
+    """
+    support = _evidence_support(chords)
+    if support <= 0:
+        return scores
+    return scores + KEY_CHORD_WEIGHT * support * _standardise(
+        chord_evidence_scores(chords, use_edges=use_edges)
+    )
+
+
 def _pooled_chroma(features: Features) -> np.ndarray:
     """Loudness-weighted average chroma over the non-silent part of the track."""
     mask = ~features.silent
@@ -288,23 +357,14 @@ def _pooled_chroma(features: Features) -> np.ndarray:
 def _chords_in_window(
     chords: list[ChordSegment] | None, start: float, end: float
 ) -> list[ChordSegment] | None:
-    """Chords clipped to ``[start, end)``, so window scores use window-local time."""
+    """Chords clipped to ``[start, end)``, or ``None`` when the window is empty.
+
+    Thin wrapper over :func:`~chord_key_analyzer.models.clip_segments`; the
+    ``None`` is what lets the caller say "no evidence here" in one check.
+    """
     if not chords:
         return None
-    clipped = []
-    for chord in chords:
-        overlap_start = max(chord.start, start)
-        overlap_end = min(chord.end, end)
-        if overlap_end > overlap_start:
-            clipped.append(
-                ChordSegment(
-                    start=overlap_start,
-                    end=overlap_end,
-                    label=chord.label,
-                    confidence=chord.confidence,
-                )
-            )
-    return clipped or None
+    return clip_segments(chords, start, end) or None
 
 
 def detect_modulations(
@@ -345,12 +405,8 @@ def detect_modulations(
             # is.  A 20 s window is *more* prone to thin evidence than a whole
             # track — one sustained chord can fill it — and undamped evidence let
             # a single chord drag the window into its own key.
-            support = _evidence_support(local_chords)
-            if support > 0:
-                # No edge bonus here: see chord_evidence_scores().
-                scores = scores + KEY_CHORD_WEIGHT * support * _standardise(
-                    chord_evidence_scores(local_chords, use_edges=False)
-                )
+            # No edge bonus here: see chord_evidence_scores().
+            scores = _blend_chord_evidence(scores, local_chords, use_edges=False)
         score_rows.append(scores)
 
     # The local key is a piecewise-constant latent observed through noisy
@@ -401,12 +457,7 @@ def detect_key(
     relative major/minor.
     """
     pooled = _pooled_chroma(features)
-    chord_scores = chord_evidence_scores(chords) if chords else None
-    best, confidence, alternatives = estimate_key_from_chroma(
-        pooled,
-        chord_scores=chord_scores,
-        chord_weight=KEY_CHORD_WEIGHT * (_evidence_support(chords) if chords else 0.0),
-    )
+    best, confidence, alternatives = estimate_key_from_chroma(pooled, chords=chords)
 
     modulations: list[Modulation] = []
     if scan_modulations:

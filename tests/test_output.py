@@ -16,6 +16,7 @@ from chord_key_analyzer.models import (
     Loop,
     Modulation,
     ProgressionSummary,
+    Section,
     chord_label,
     parse_chord_label,
 )
@@ -35,7 +36,7 @@ def sample_result():
         ),
         chords=[
             ChordSegment(0.0, 2.0, "C:maj", 0.9),
-            ChordSegment(2.0, 4.0, "G:maj", 0.8),
+            ChordSegment(2.0, 4.0, "G:maj", 0.8, bass="B"),
             ChordSegment(4.0, 6.0, "N", 0.3),
             ChordSegment(6.0, 8.0, "F:maj", 0.7),
         ],
@@ -46,6 +47,18 @@ def sample_result():
         ),
         tempo=120.0,
         meta={"engine": "template", "version": "0.1.0"},
+        sections=[
+            Section(
+                start=0.0,
+                end=4.0,
+                label="A",
+                tonic="C",
+                mode="major",
+                key_confidence=0.77,
+                progression=ProgressionSummary(["I", "V"], ["C:maj", "G:maj"], None),
+            ),
+            Section(start=4.0, end=8.0, label="B"),
+        ],
     )
 
 
@@ -71,7 +84,17 @@ def test_json_top_level_shape_is_stable():
         "key",
         "chords",
         "progression",
+        "sections",
         "meta",
+    }
+    assert set(payload["sections"][0]) == {
+        "start",
+        "end",
+        "label",
+        "tonic",
+        "mode",
+        "key_confidence",
+        "progression",
     }
     assert set(payload["key"]) == {
         "tonic",
@@ -80,7 +103,7 @@ def test_json_top_level_shape_is_stable():
         "alternatives",
         "modulations",
     }
-    assert set(payload["chords"][0]) == {"start", "end", "label", "confidence"}
+    assert set(payload["chords"][0]) == {"start", "end", "label", "confidence", "bass"}
     assert set(payload["progression"]) == {"roman", "labels", "main_loop"}
     assert set(payload["progression"]["main_loop"]) == {
         "labels",
@@ -122,6 +145,53 @@ def test_lab_format_is_mirex_style():
     lines = to_lab(sample_result()).strip().split("\n")
     assert lines[0] == "0.000\t2.000\tC:maj"
     assert len(lines) == 4
+
+
+def test_lab_writes_a_bass_as_a_degree_slash():
+    """`G:maj/B` is not a label mir_eval parses; `G:maj/3` is."""
+    assert "\tG:maj/3\n" in to_lab(sample_result())
+
+
+def test_json_carries_the_bass_as_a_note_name():
+    """The JSON field is for consumers, who want the note, not the degree."""
+    payload = json.loads(to_json(sample_result()))
+    assert [c["bass"] for c in payload["chords"]] == [None, "B", None, None]
+    assert payload["chords"][1]["label"] == "G:maj", "the label itself stays plain"
+
+
+def test_render_shows_a_slash_chord_by_note_name():
+    console = Console(record=True, width=100)
+    render(sample_result(), console=console)
+    assert "G:maj/B" in console.export_text()
+
+
+def test_json_carries_sections():
+    payload = json.loads(to_json(sample_result()))
+    first, second = payload["sections"]
+    assert (first["label"], first["tonic"], first["mode"]) == ("A", "C", "major")
+    assert first["progression"]["roman"] == ["I", "V"]
+    assert (second["label"], second["tonic"], second["progression"]) == ("B", None, None)
+
+
+def test_render_shows_the_sections_panel():
+    console = Console(record=True, width=100)
+    render(sample_result(), console=console)
+    text = console.export_text()
+    assert "Sections" in text
+    assert "0:00.0–0:04.0" in text
+
+
+def test_render_omits_the_sections_panel_when_there_are_none():
+    result = AnalysisResult(
+        file="short.wav",
+        duration=8.0,
+        key=KeyEstimate("C", "major", 0.8),
+        chords=[ChordSegment(0.0, 8.0, "C:maj", 0.9)],
+        progression=ProgressionSummary(["I"], ["C:maj"], None),
+    )
+    console = Console(record=True, width=100)
+    render(result, console=console)
+    assert "Sections" not in console.export_text()
 
 
 def test_lab_keeps_the_no_chord_state():

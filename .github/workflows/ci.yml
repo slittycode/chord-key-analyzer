@@ -95,3 +95,90 @@ jobs:
           assert summary["key"] == 1.0, summary
           print("eval OK:", {k: summary[k] for k in ("root", "majmin", "mirex", "key")})
           EOF
+
+  bare-install:
+    # The core install has to stand on its own. This leg installs no extras, so
+    # anything that quietly became a hard dependency shows up as a failure rather
+    # than as a test that silently stopped running. One Python is enough:
+    # whether an extra is absent does not vary by interpreter version.
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install ffmpeg
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg
+
+      - name: Install without any extras
+        run: pip install -e '.[dev]'
+
+      - name: Test
+        # No -q here: pyproject already supplies it via addopts, and a second one
+        # makes pytest quiet enough to drop the "N passed" line the next step
+        # counts. `set -o pipefail` so a failing run is not masked by tee.
+        run: |
+          set -o pipefail
+          pytest -rs | tee bare-run.txt
+
+      - name: Check every skip is an extra we left out on purpose
+        run: |
+          python - <<'EOF'
+          import re, sys
+
+          report = open("bare-run.txt").read()
+
+          # Every skip must name one of the extras this leg deliberately omits.
+          # An unexplained skip means a test stopped running for some other
+          # reason, which is exactly what this job exists to notice.
+          allowed = re.compile(r"requires the \[(eval|web)\] extra|ffmpeg not installed")
+          reasons = re.findall(r"^SKIPPED \[\d+\] (.+)$", report, re.MULTILINE)
+          unexplained = [r for r in reasons if not allowed.search(r)]
+          assert not unexplained, f"unexplained skips: {unexplained}"
+
+          # And both extras must still be skipping *something*. If mir_eval or
+          # FastAPI became a core dependency, these modules would start running
+          # here and the corresponding skip would vanish.
+          for extra in ("eval", "web"):
+              assert any(f"[{extra}] extra" in r for r in reasons), (
+                  f"nothing skipped for the [{extra}] extra — has it become a core dependency?"
+              )
+
+          # A floor, not an exact count: tests get added, and pinning the total
+          # would turn every new test into a CI failure here.
+          passed = int(re.search(r"(\d+) passed", report).group(1))
+          assert passed >= 150, f"only {passed} tests ran without the extras"
+          print(f"bare install OK: {passed} passed, {len(reasons)} skipped")
+          EOF
+
+      - name: Each optional feature explains how to install itself
+        run: |
+          # Offline by construction: `cka eval` checks the extra before it walks
+          # the dataset, `cka web` before it binds, and download_url imports
+          # yt_dlp before any network call. example.invalid is reserved by
+          # RFC 2606 and cannot resolve even if that order ever changed.
+          set +e
+          cka eval . > eval-hint.txt 2>&1
+          test $? -ne 0 || { echo "cka eval should have failed"; exit 1; }
+          cka web --no-browser > web-hint.txt 2>&1
+          test $? -ne 0 || { echo "cka web should have failed"; exit 1; }
+          cka analyze 'https://example.invalid/song' > url-hint.txt 2>&1
+          test $? -ne 0 || { echo "cka analyze should have failed"; exit 1; }
+          set -e
+          grep -F 'chord-key-analyzer[eval]' eval-hint.txt
+          grep -F 'chord-key-analyzer[web]' web-hint.txt
+          grep -F 'chord-key-analyzer[url]' url-hint.txt
+          # `grep -l` exits 0 only when it finds one, which is the failure we are
+          # looking for. (`grep -L` lists the *clean* files but still exits 1 when
+          # nothing matched, so under `set -e` it fails exactly when it passes.)
+          if grep -l Traceback eval-hint.txt web-hint.txt url-hint.txt; then
+            echo "a missing extra printed a traceback instead of its install hint"
+            exit 1
+          fi
+          echo "install hints OK"
