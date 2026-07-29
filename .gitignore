@@ -9,6 +9,12 @@ venv/
 .ruff_cache/
 .coverage
 htmlcov/
+.DS_Store
 *.wav
 *.lab
+
+# Default output names the CLI and the CI end-to-end steps write into the repo
+# root.  Listed by name rather than as *.json, which would swallow real fixtures.
 result.json
+out.json
+eval.json
