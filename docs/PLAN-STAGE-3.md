@@ -117,3 +117,62 @@ Per PR and again after M4:
 4. Bare-install leg green (M4).
 5. Manual smoke: M0 — `cka eval` over a dir with one bad `.lab` completes and reports the failure; M1 — inverted render shows `/3` in `.lab` and `"bass"` in JSON; M2 — sus4 render shows `Isus4`; M3 — A/B/A render shows the sections panel + web sections lane; M4 — bare venv reproduces all three install hints.
 6. Post-merge: both tags pushed and CHANGELOG links resolve.
+
+---
+
+## Changes made during implementation
+
+The round shipped as PR #4 and was released as 0.2.0. Everything above this line is
+the plan as written, left unedited. Where it and the code disagree, the code is
+right, and this section says why. `ROADMAP.md` carries what is still open.
+
+### 1. `sus4` was measured and rejected; the vocabulary stayed at 77 states
+
+M2's table calls `sus4` an addition (77 → 89) on the grounds that it is
+collision-free and decodes its own renders 7 roots out of 7. Both facts held up, and
+it was still wrong to add. A suspended template is too good a match for melody: two
+stepwise notes blurred by the chroma median filter, plus their fifths, *are* a sus
+chord. A bare scale decodes as a sus4 on every degree, and the key evidence collapses
+with it — A minor read as C major. `sus2`, which M2 defined as a bass-driven
+re-spelling *of* `sus4`, went with it.
+
+`maj6` shipped as planned, and `min6` stayed out of scope for the reason M2 gives.
+The vocabulary is 77 states, not 89. See `ROADMAP.md` § "Vocabulary: what was
+measured and rejected", which keeps the margins for `sus4`, `hdim7` and `dim7`
+together.
+
+### 2. M3's peak-picking threshold was itself the defect
+
+M3 prescribes `librosa.util.peak_pick(..., delta=0.10*novelty.std(), wait=8)`
+verbatim, and that expression is a bug. A relative threshold is the right instinct —
+it is exactly what lets one setting work on both a track that changes constantly and
+one that barely moves — but on a curve with no spread it evaluates to zero, and
+`peak_pick` reads an all-zero array as a peak at every position. Sixty seconds of
+digital silence produced six sections, `A` through `F`.
+
+Both halves were individually correct: `novelty_curve` collapses featureless input to
+zeros exactly as intended, and the threshold does the right thing on every curve that
+has a shape. The bug lived only in the seam between them. Found reviewing PR #4,
+fixed in `1365ff1` by catching the degenerate case ahead of the threshold rather than
+by it, with a regression test on the seam as well as end to end.
+
+Recorded here and not only in the changelog because the plan specified it. Plan
+review was the cheapest place this was ever going to be caught.
+
+### 3. The release facts and the action item are spent
+
+The context section's "no tags exist" and its user action item both described
+`2901c90`. Both tags now exist — `v0.1.0` retroactively at `2901c90` as M4 planned,
+`v0.2.0` at the release — and the CHANGELOG links resolve. `main` is the default
+branch, and the two stale `claude/*` branches are deleted.
+
+### 4. Smaller drift
+
+1. The round added about 110 tests, not the 35–45 M4 estimated. The suite is 347.
+2. The bare-install leg asserts each extra still skips *something*, rather than M4's
+   proposed skip floor of 40. A floor on a count would need revising every time a
+   gated test was added, and what the job actually cares about is whether an extra
+   quietly became a core dependency — which is what the per-extra assertion
+   measures directly.
+3. M4's changelog sketch listed `77→89 states` under Changed and `sus4` under Added.
+   Neither shipped, per change 1.
