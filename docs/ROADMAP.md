@@ -20,21 +20,13 @@ work is worse than no roadmap.
 
 ## Near term
 
-1. **Merge PR #4 and tag `v0.2.0`.** The branch is green and the changelog entry
-   is written; this is a user action, not a code change.
-2. **Phantom sections on a flat novelty curve.** A track whose novelty curve is
-   exactly flat — digital silence is the reachable case — gets a boundary every
-   `wait + 1` blocks instead of none, because `librosa.util.peak_pick` on an
-   all-zero array with `delta = 0` treats every position as a peak. Sixty
-   seconds of silence currently yields six sections, `A` through `F`. Guard
-   `_boundaries` on the curve's spread. See "Known defects" below.
-3. **`min6` re-spelling.** Documented out of scope for Stage 3 and still open.
+1. **`min6` re-spelling.** Documented out of scope for Stage 3 and still open.
    Unlike `maj6`, `min6` is enharmonically `hdim7`, which is not a decoder state
    — so there is nothing to re-spell *from*. Doing it properly means either
    adding `hdim7` as a state (it currently loses its own renders to the plain
    diminished triad at all twelve roots) or driving the re-spelling from
    something other than an existing state.
-4. **DRM-aware ingest errors.** A subscription-protected `.m4p` currently dies
+2. **DRM-aware ingest errors.** A subscription-protected `.m4p` currently dies
    with a generic ffmpeg error that tells the user nothing. It should name the
    problem: this file is protected, that is not something the tool will work
    around, analyse a DRM-free copy instead. See `APPLE-MUSIC.md`.
@@ -86,12 +78,22 @@ and the measurement said no:
 
 Carried here rather than in an issue tracker because the repo does not have one.
 
-- **Flat-novelty sections** (above). One-line guard in `sections.py::_boundaries`:
-  return `[0]` when `novelty.std()` is zero to within floating point. Verified to
-  fix the silence case without moving a boundary on real material.
-- **`_label_spans` on zero vectors.** Related, and moot once the above is fixed
-  for the only input that reaches it: every span's average chroma is the zero
-  vector, every similarity is `0.0`, and the comparison is strictly greater —
-  so no span ever matches a previous one and each gets a fresh letter. If the
-  labeller is ever reached with degenerate input by another path, it should treat
-  a zero-norm average as "same as anything", not "different from everything".
+- **`_label_spans` on zero vectors.** Latent rather than reachable, and worth
+  writing down before it becomes reachable. A span whose average chroma is the
+  zero vector scores `0.0` against every representative, and the comparison is
+  strictly greater — so it never matches a previous span and always takes a
+  fresh letter. Two silent stretches of the same track would therefore be
+  labelled `B` and `C` rather than `B` twice. The flat-curve fix in 0.2.0 closed
+  the only path that reached this with *every* span degenerate; a track that is
+  silent in places and not in others could still reach it with one. The
+  labeller should treat a zero-norm average as "same as anything", not
+  "different from everything".
+
+### Fixed since this file was written
+
+- **Flat-novelty sections.** Sixty seconds of digital silence produced six
+  sections, `A` through `F`: the peak threshold is a fraction of the novelty
+  curve's own spread, so on a flat curve it became zero, and `peak_pick` reads
+  an all-zero array as a peak at every position. Fixed on the 0.2.0 branch by
+  catching the degenerate case ahead of the threshold rather than with it, with
+  a regression test on the seam as well as end to end.
