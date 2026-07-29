@@ -56,7 +56,7 @@ really is standalone.
   `analyze_source()`. The README also claimed the server binds to localhost
   "only" rather than by default, and its `meta` example was missing three keys.
 
-## [0.1.0] — 2026-07-28
+## [0.1.0] — 2026-07-29
 
 First release: offline key, chord and progression analysis for audio files and
 yt-dlp-supported URLs, as a `cka` CLI, a local web UI, and a Python API.
