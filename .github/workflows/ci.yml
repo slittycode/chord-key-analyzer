@@ -1,8 +1,12 @@
 name: CI
 
 on:
+  # Only `main` builds on push. Every other branch is covered by its pull
+  # request, and running both meant each change was built twice — once as a
+  # push, once as a PR. Cancelling the loser of that race works but leaves a
+  # trail of cancelled jobs on the PR; not starting it is cleaner and cheaper.
   push:
-    branches: ["**"]
+    branches: [main]
   pull_request:
 
 concurrency:
