@@ -3,6 +3,9 @@
 This is the plan the project was built from, followed by the decisions that changed
 during implementation and why.
 
+The third round of work — bass and inversions, the vocabulary measurement, and
+sections — has its own plan in `PLAN-STAGE-3.md`, written to the same shape.
+
 ## Goal
 
 A lean, fully offline, LLM-API-key-free music analyzer. Given a song — a local audio file
@@ -178,6 +181,9 @@ helpful error instead.
 ---
 
 ## Deferred (phase 2)
+
+This is the list as it stood at 0.1.0. Most of it has since been shipped, measured
+and rejected, or restated — `ROADMAP.md` is the live version and says which is which.
 
 - Neural chord engine (crema) behind `[deep]`
 - Inversion and bass-note detection
