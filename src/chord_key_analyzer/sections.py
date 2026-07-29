@@ -135,13 +135,24 @@ def _boundaries(novelty: np.ndarray, min_blocks: int) -> list[int]:
     if novelty.size < 2 * min_blocks:
         return [0]
 
+    # A curve with no spread has no peaks in it — but the threshold below is a
+    # fraction *of that spread*, so on a flat curve it becomes zero, and
+    # peak_pick then reads every position as a peak and returns one every
+    # ``wait`` blocks.  The relative threshold that makes one setting work on
+    # both a busy track and a static one is exactly what inverts here, so the
+    # degenerate case has to be caught before it rather than by it.  Digital
+    # silence is the input that reaches this.
+    spread = float(novelty.std())
+    if spread <= 1e-9:
+        return [0]
+
     peaks = librosa.util.peak_pick(
         novelty,
         pre_max=4,
         post_max=4,
         pre_avg=8,
         post_avg=8,
-        delta=SECTION_PEAK_DELTA * float(novelty.std()),
+        delta=SECTION_PEAK_DELTA * spread,
         wait=min_blocks,
     )
 

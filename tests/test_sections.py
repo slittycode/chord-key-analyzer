@@ -18,6 +18,7 @@ from chord_key_analyzer.key import detect_key
 from chord_key_analyzer.models import Section
 from chord_key_analyzer.sections import (
     SECTION_MIN_TRACK,
+    _boundaries,
     _checkerboard_kernel,
     _letter,
     detect_sections,
@@ -98,6 +99,17 @@ def test_a_homogeneous_track_is_one_section():
     assert [s.label for s in sections] == ["A"]
 
 
+def test_a_silent_track_is_one_section():
+    """Silence is long enough to be sectioned and has nothing to section on.
+
+    It is the reachable input whose novelty curve is flat to the bit, which is
+    the case the peak threshold cannot judge for itself — see
+    :func:`test_a_flat_novelty_curve_holds_no_boundaries`.
+    """
+    sections, _ = analyse(fx.render_silence(40.0))
+    assert [s.label for s in sections] == ["A"]
+
+
 def test_a_short_track_gets_no_sections():
     audio = fx.render_progression(fx.POP_LOOP_C, chord_duration=2.0, repeats=3)
     sections, _ = analyse(audio)
@@ -137,6 +149,19 @@ def test_novelty_peaks_at_a_change_and_not_within_a_block():
 def test_novelty_is_flat_on_uniform_input():
     uniform = np.tile(np.array([[1.0], [0.5], [0.25]]), (1, 60))
     assert novelty_curve(uniform).max() == pytest.approx(0.0, abs=1e-9)
+
+
+def test_a_flat_novelty_curve_holds_no_boundaries():
+    """The seam between the two halves of the flat-curve case.
+
+    ``novelty_curve`` reporting a flat curve is only half an answer; the other
+    half is ``_boundaries`` declining to read peaks into it.  Left to itself,
+    ``peak_pick`` on an all-zero array with ``delta=0`` calls every position a
+    peak and returns one every ``wait`` blocks — maximum structure from the
+    input with none.
+    """
+    assert _boundaries(np.zeros(60), min_blocks=8) == [0]
+    assert _boundaries(np.full(60, 0.7), min_blocks=8) == [0]
 
 
 def test_novelty_handles_degenerate_input():
