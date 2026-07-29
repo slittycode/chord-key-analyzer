@@ -9,7 +9,12 @@ concurrency:
   # Keyed on the branch rather than the ref, so the push run and the
   # pull_request run for the same branch share a group and the redundant one is
   # cancelled instead of doubling every PR's CI.
-  group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
+  #
+  # `ref_name`, not `ref`: on a push `github.ref` is `refs/heads/topic` while
+  # `head_ref` on the pull request is a bare `topic`, so the two events built
+  # different keys and neither run ever cancelled the other. `ref_name` drops
+  # the prefix, which is what makes the two halves match.
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref_name }}
   cancel-in-progress: true
 
 jobs:
