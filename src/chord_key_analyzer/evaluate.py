@@ -20,6 +20,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from .output import _write_text
+
 #: Extensions treated as audio when matching a ``.lab`` to its recording.
 AUDIO_EXTENSIONS = (
     ".wav",
@@ -454,10 +456,7 @@ def write_report_json(
 ) -> None:
     """Write the report as JSON; ``-`` means stdout."""
     payload = json.dumps(report_payload(tracks, summary), indent=2)
-    if destination == "-":
-        sys.stdout.write(payload + "\n")
-        return
-    Path(destination).write_text(payload + "\n", encoding="utf-8")
+    _write_text(payload + "\n", destination)
 
 
 def write_report_csv(

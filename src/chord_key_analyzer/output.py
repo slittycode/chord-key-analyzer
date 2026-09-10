@@ -28,13 +28,17 @@ def to_json(result: AnalysisResult, indent: int = 2) -> str:
     return json.dumps(result.to_dict(), indent=indent)
 
 
+def _write_text(payload: str, destination: str) -> None:
+    """Write ``payload`` to ``destination`` verbatim; ``-`` means stdout."""
+    if destination == "-":
+        sys.stdout.write(payload)
+        return
+    Path(destination).write_text(payload, encoding="utf-8")
+
+
 def write_json(result: AnalysisResult, destination: str) -> None:
     """Write JSON to ``destination``; ``-`` means stdout."""
-    payload = to_json(result)
-    if destination == "-":
-        sys.stdout.write(payload + "\n")
-        return
-    Path(destination).write_text(payload + "\n", encoding="utf-8")
+    _write_text(to_json(result) + "\n", destination)
 
 
 def to_lab(result: AnalysisResult) -> str:
@@ -49,11 +53,7 @@ def to_lab(result: AnalysisResult) -> str:
 
 
 def write_lab(result: AnalysisResult, destination: str) -> None:
-    payload = to_lab(result)
-    if destination == "-":
-        sys.stdout.write(payload)
-        return
-    Path(destination).write_text(payload, encoding="utf-8")
+    _write_text(to_lab(result), destination)
 
 
 def _confidence_style(confidence: float) -> str:

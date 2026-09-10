@@ -177,6 +177,8 @@ def probe_duration(path: str | Path) -> float | None:
 
         return float(sf.info(str(path)).duration)
     except Exception:
+        # soundfile doesn't recognize every container ffprobe does; fall
+        # through to the ffprobe-based probe below rather than surfacing this.
         pass
 
     ffprobe = shutil.which("ffprobe")
