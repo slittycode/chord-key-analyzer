@@ -20,6 +20,7 @@ from chord_key_analyzer.sections import (
     SECTION_MIN_TRACK,
     _boundaries,
     _checkerboard_kernel,
+    _label_spans,
     _letter,
     detect_sections,
     novelty_curve,
@@ -174,3 +175,21 @@ def test_novelty_handles_degenerate_input():
 )
 def test_section_letters_do_not_run_out(index, expected):
     assert _letter(index) == expected
+
+
+def test_label_spans_matches_silent_spans_to_each_other():
+    """A silent span's average chroma is the zero vector, which cosine-matches
+    nothing -- not even another silent span -- without a dedicated path for it.
+    Two separate silent spans must still get the same letter as each other, and
+    neither should collide with a real, unrelated span's letter."""
+    blocks = np.zeros((12, 40))
+    blocks[0, 0:10] = 1.0  # a real span, pitch class 0
+    # blocks[:, 10:20] left all-zero: a silent span
+    blocks[6, 20:30] = 1.0  # a different real span, pitch class 6
+    # blocks[:, 30:40] left all-zero: a second silent span
+
+    labels = _label_spans([(0, 10), (10, 20), (20, 30), (30, 40)], blocks)
+
+    assert labels[1] == labels[3]
+    assert labels[0] != labels[1]
+    assert labels[0] != labels[2]

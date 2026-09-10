@@ -181,11 +181,27 @@ def _label_spans(spans: list[tuple[int, int]], blocks: np.ndarray) -> list[str]:
     representatives: list[np.ndarray] = []
     letters: list[str] = []
     labels: list[str] = []
+    silent_letter: str | None = None
 
     for start, end in spans:
         average = blocks[:12, start:end].mean(axis=1)
         norm = float(np.linalg.norm(average))
-        average = average / norm if norm > 1e-9 else average
+
+        if norm <= 1e-9:
+            # Cosine similarity is undefined for a zero vector, and a silent
+            # span dotted against any representative always scores exactly
+            # 0.0 — which can never beat the strict `> best_score` floor
+            # below, so it would otherwise never match a previous silent span
+            # and always mint a fresh letter.  Treat every silent span as the
+            # same as every other silent span instead.
+            if silent_letter is None:
+                silent_letter = _letter(len(representatives))
+                representatives.append(average)
+                letters.append(silent_letter)
+            labels.append(silent_letter)
+            continue
+
+        average = average / norm
 
         best_index, best_score = -1, 0.0
         for index, previous in enumerate(representatives):
