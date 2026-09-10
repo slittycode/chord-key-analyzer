@@ -88,9 +88,7 @@ def test_ambiguous_material_reports_low_confidence():
 
 def test_confidence_is_higher_for_clear_than_ambiguous_material():
     clear = analyse_key(build_progression("C", MAJOR_DEGREES))
-    audio = fx.render_progression(
-        [("C", "aug"), ("D", "aug")], chord_duration=1.5, repeats=4
-    )
+    audio = fx.render_progression([("C", "aug"), ("D", "aug")], chord_duration=1.5, repeats=4)
     features = extract_features(audio, fx.SR)
     murky = detect_key(features, scan_modulations=False)
     assert clear.confidence > murky.confidence
@@ -170,8 +168,9 @@ def test_derived_diatonic_set_reproduces_the_hand_written_table(mode, legacy, to
     """
     from chord_key_analyzer.key import _diatonic_chords
 
-    expected = {((tonic + degree) % 12, quality) for degree, qualities in legacy
-                for quality in qualities}
+    expected = {
+        ((tonic + degree) % 12, quality) for degree, qualities in legacy for quality in qualities
+    }
     derived = {
         (root, quality)
         for root, quality in _diatonic_chords(tonic, mode)
@@ -266,9 +265,7 @@ def test_thin_evidence_pulls_the_scan_less_than_undamped():
     support = key_module._evidence_support(sustained)
     assert support == pytest.approx(1 / 3), "one distinct chord is one third of full support"
 
-    evidence = key_module._standardise(
-        key_module.chord_evidence_scores(sustained, use_edges=False)
-    )
+    evidence = key_module._standardise(key_module.chord_evidence_scores(sustained, use_edges=False))
     c_index = key_module._TEMPLATE_NAMES.index(("C", "major"))
     g_index = key_module._TEMPLATE_NAMES.index(("G", "major"))
     margin = evidence[g_index] - evidence[c_index]

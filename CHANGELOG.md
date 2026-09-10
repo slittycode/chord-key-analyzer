@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- `docs/ROADMAP.md` no longer claims the repo has no issue tracker — GitHub
+  Issues is enabled; known defects are kept here on purpose, not because
+  there's nowhere else to put them.
+- `output.py`'s three copies of "write to stdout, or write to a path" —
+  `write_json`, `write_lab`, and `evaluate.py`'s `write_report_json` — are now
+  one `_write_text()` helper.
+
+### Fixed
+
+- `_label_spans` no longer mints a fresh section letter for every silent
+  span. A silent span's average chroma is the zero vector, which
+  cosine-matches nothing — not even another silent span — without a
+  dedicated path for it; two quiet stretches in the same track were
+  labelled differently (e.g. `B` and `C`) instead of matching. Was
+  documented as a known defect in `docs/ROADMAP.md`.
+
 ## [0.2.0] — 2026-07-29
 
 Bass awareness, structural sections, and a CI leg that proves the core install

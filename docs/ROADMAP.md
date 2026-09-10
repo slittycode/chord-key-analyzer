@@ -76,7 +76,9 @@ and the measurement said no:
 
 ## Known defects
 
-Carried here rather than in an issue tracker because the repo does not have one.
+Carried here rather than filed as a GitHub issue — it is small, already
+root-caused, and reads better next to the near-term work it competes with for
+priority than filed away on its own.
 
 - **`_label_spans` on zero vectors.** Latent rather than reachable, and worth
   writing down before it becomes reachable. A span whose average chroma is the

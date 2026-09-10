@@ -48,8 +48,11 @@ jobs:
       - name: Lint
         run: ruff check .
 
+      - name: Format check
+        run: ruff format --check .
+
       - name: Test
-        run: pytest -q
+        run: pytest -q --cov=chord_key_analyzer --cov-report=term-missing
 
       - name: End-to-end CLI run
         run: |

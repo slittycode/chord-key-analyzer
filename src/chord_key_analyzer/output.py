@@ -28,13 +28,17 @@ def to_json(result: AnalysisResult, indent: int = 2) -> str:
     return json.dumps(result.to_dict(), indent=indent)
 
 
+def _write_text(payload: str, destination: str) -> None:
+    """Write ``payload`` to ``destination`` verbatim; ``-`` means stdout."""
+    if destination == "-":
+        sys.stdout.write(payload)
+        return
+    Path(destination).write_text(payload, encoding="utf-8")
+
+
 def write_json(result: AnalysisResult, destination: str) -> None:
     """Write JSON to ``destination``; ``-`` means stdout."""
-    payload = to_json(result)
-    if destination == "-":
-        sys.stdout.write(payload + "\n")
-        return
-    Path(destination).write_text(payload + "\n", encoding="utf-8")
+    _write_text(to_json(result) + "\n", destination)
 
 
 def to_lab(result: AnalysisResult) -> str:
@@ -43,17 +47,11 @@ def to_lab(result: AnalysisResult) -> str:
     Labels are written in the ``.lab`` dialect, so a detected bass appears as a
     degree slash (``C:maj/3``) — the spelling mir_eval parses.
     """
-    return "".join(
-        f"{c.start:.3f}\t{c.end:.3f}\t{c.mirex_label}\n" for c in result.chords
-    )
+    return "".join(f"{c.start:.3f}\t{c.end:.3f}\t{c.mirex_label}\n" for c in result.chords)
 
 
 def write_lab(result: AnalysisResult, destination: str) -> None:
-    payload = to_lab(result)
-    if destination == "-":
-        sys.stdout.write(payload)
-        return
-    Path(destination).write_text(payload, encoding="utf-8")
+    _write_text(to_lab(result), destination)
 
 
 def _confidence_style(confidence: float) -> str:
@@ -104,15 +102,11 @@ def _sections_panel(result: AnalysisResult) -> Panel | None:
         if index:
             body.append("\n")
         body.append(f"{section.label:<3}", style="bold cyan")
-        body.append(
-            f" {format_time(section.start)}–{format_time(section.end)}  ", style="dim"
-        )
+        body.append(f" {format_time(section.start)}–{format_time(section.end)}  ", style="dim")
         if section.key_name:
             body.append(f"{section.key_name}  ")
         if section.progression and section.progression.roman:
-            body.append(
-                " – ".join(section.progression.roman[:8]), style="magenta"
-            )
+            body.append(" – ".join(section.progression.roman[:8]), style="magenta")
 
     return Panel(body, title="Sections", border_style="blue", expand=False)
 
@@ -153,9 +147,7 @@ def _progression_panel(result: AnalysisResult) -> Panel | None:
         body.append(" – ".join(loop.roman), style="bold magenta")
         body.append(f"  ×{loop.repeats}\n", style="bold")
         body.append(" – ".join(loop.labels) + "\n", style="dim")
-        body.append(
-            f"{format_time(loop.start)}–{format_time(loop.end)}\n", style="dim"
-        )
+        body.append(f"{format_time(loop.start)}–{format_time(loop.end)}\n", style="dim")
     else:
         body.append("no repeating loop detected\n", style="dim")
 
@@ -163,9 +155,7 @@ def _progression_panel(result: AnalysisResult) -> Panel | None:
     if histogram:
         total = sum(duration for _, duration in histogram) or 1.0
         body.append("\nmost played  ", style="dim")
-        body.append(
-            ", ".join(f"{label} ({duration / total:.0%})" for label, duration in histogram)
-        )
+        body.append(", ".join(f"{label} ({duration / total:.0%})" for label, duration in histogram))
 
     return Panel(body, title="Progression", border_style="magenta", expand=False)
 
@@ -185,6 +175,5 @@ def render(result: AnalysisResult, console: Console | None = None) -> None:
     else:
         console.print("[yellow]No chords detected.[/yellow]")
     console.print(
-        f"[dim]engine: {result.meta.get('engine')} · "
-        f"cka {result.meta.get('version')}[/dim]"
+        f"[dim]engine: {result.meta.get('engine')} · cka {result.meta.get('version')}[/dim]"
     )

@@ -21,8 +21,7 @@ def key(tonic="C", mode="major"):
 
 def segments(labels, duration=2.0):
     return [
-        ChordSegment(i * duration, (i + 1) * duration, label, 0.8)
-        for i, label in enumerate(labels)
+        ChordSegment(i * duration, (i + 1) * duration, label, 0.8) for i, label in enumerate(labels)
     ]
 
 

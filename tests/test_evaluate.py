@@ -133,9 +133,7 @@ def test_load_key_reference_reads_isophonics_segments(tmp_path):
     """Longest tonality wins; Silence segments carry no key."""
     path = tmp_path / "song.key.lab"
     path.write_text(
-        "0.000000\t1.500000\tSilence\n"
-        "1.500000\t10.000000\tKey\tG\n"
-        "10.000000\t200.000000\tKey\tE\n",
+        "0.000000\t1.500000\tSilence\n1.500000\t10.000000\tKey\tG\n10.000000\t200.000000\tKey\tE\n",
         encoding="utf-8",
     )
     assert load_key_reference(path) == "E major"
@@ -204,9 +202,7 @@ def test_summary_weights_chord_metrics_by_duration():
         TrackEvaluation(
             name="short", duration=10.0, chord_scores=dict.fromkeys(CHORD_METRICS, 1.0)
         ),
-        TrackEvaluation(
-            name="long", duration=30.0, chord_scores=dict.fromkeys(CHORD_METRICS, 0.5)
-        ),
+        TrackEvaluation(name="long", duration=30.0, chord_scores=dict.fromkeys(CHORD_METRICS, 0.5)),
     ]
     summary = summarise(tracks)
     assert summary["majmin"] == pytest.approx(0.625)
@@ -289,9 +285,7 @@ def test_empty_chord_result_still_scores(tmp_path, monkeypatch):
         class key:
             name = "C major"
 
-    monkeypatch.setattr(
-        "chord_key_analyzer.pipeline.analyze_source", lambda *a, **k: EmptyResult()
-    )
+    monkeypatch.setattr("chord_key_analyzer.pipeline.analyze_source", lambda *a, **k: EmptyResult())
     pairs, _ = discover_pairs(tmp_path)
     evaluation = evaluate_track(pairs[0])
     assert evaluation.ok, evaluation.error

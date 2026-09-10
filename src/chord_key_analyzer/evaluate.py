@@ -20,6 +20,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from .output import _write_text
+
 #: Extensions treated as audio when matching a ``.lab`` to its recording.
 AUDIO_EXTENSIONS = (
     ".wav",
@@ -377,9 +379,7 @@ def summarise(tracks: list[TrackEvaluation]) -> dict[str, Any]:
         if not values or weight <= 0:
             summary[metric] = None
             continue
-        summary[metric] = round(
-            sum(score * duration for score, duration in values) / weight, 4
-        )
+        summary[metric] = round(sum(score * duration for score, duration in values) / weight, 4)
 
     key_scores = [t.key_score for t in scored if t.key_score is not None]
     summary["key"] = round(sum(key_scores) / len(key_scores), 4) if key_scores else None
@@ -454,10 +454,7 @@ def write_report_json(
 ) -> None:
     """Write the report as JSON; ``-`` means stdout."""
     payload = json.dumps(report_payload(tracks, summary), indent=2)
-    if destination == "-":
-        sys.stdout.write(payload + "\n")
-        return
-    Path(destination).write_text(payload + "\n", encoding="utf-8")
+    _write_text(payload + "\n", destination)
 
 
 def write_report_csv(

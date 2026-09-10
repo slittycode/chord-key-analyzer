@@ -195,9 +195,7 @@ def _segments_from_path(
     return segments
 
 
-def _merge_short_segments(
-    segments: list[ChordSegment], min_duration: float
-) -> list[ChordSegment]:
+def _merge_short_segments(segments: list[ChordSegment], min_duration: float) -> list[ChordSegment]:
     """Drop sub-``min_duration`` segments, extending whichever neighbour is longer."""
     if len(segments) <= 1:
         return segments
@@ -395,9 +393,7 @@ BASS_SALIENCE = 0.30
 BASS_AGREEMENT = 0.6
 
 
-def detect_inversions(
-    segments: list[ChordSegment], features: Features
-) -> list[ChordSegment]:
+def detect_inversions(segments: list[ChordSegment], features: Features) -> list[ChordSegment]:
     """Attach the sounding bass note to each segment, where there plainly is one.
 
     Run this **after** every merge and snap helper.  Those rebuild

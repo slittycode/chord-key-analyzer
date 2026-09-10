@@ -108,9 +108,7 @@ def _decode_with_soundfile(
     return np.ascontiguousarray(samples, dtype=np.float32)
 
 
-def _decode_with_ffmpeg(
-    path: Path, sr: int, offset: float, duration: float | None
-) -> np.ndarray:
+def _decode_with_ffmpeg(path: Path, sr: int, offset: float, duration: float | None) -> np.ndarray:
     ffmpeg = _require_ffmpeg(f"to decode {path.name}")
     cmd = [ffmpeg, "-nostdin", "-loglevel", "error"]
     if offset > 0:
@@ -177,6 +175,8 @@ def probe_duration(path: str | Path) -> float | None:
 
         return float(sf.info(str(path)).duration)
     except Exception:
+        # soundfile doesn't recognize every container ffprobe does; fall
+        # through to the ffprobe-based probe below rather than surfacing this.
         pass
 
     ffprobe = shutil.which("ffprobe")

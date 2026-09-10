@@ -36,12 +36,8 @@ from .models import (
     parse_chord_label,
 )
 
-KRUMHANSL_MAJOR = np.array(
-    [6.35, 2.23, 3.48, 2.33, 4.38, 4.09, 2.52, 5.19, 2.39, 3.66, 2.29, 2.88]
-)
-KRUMHANSL_MINOR = np.array(
-    [6.33, 2.68, 3.52, 5.38, 2.60, 3.53, 2.54, 4.75, 3.98, 2.69, 3.34, 3.17]
-)
+KRUMHANSL_MAJOR = np.array([6.35, 2.23, 3.48, 2.33, 4.38, 4.09, 2.52, 5.19, 2.39, 3.66, 2.29, 2.88])
+KRUMHANSL_MINOR = np.array([6.33, 2.68, 3.52, 5.38, 2.60, 3.53, 2.54, 4.75, 3.98, 2.69, 3.34, 3.17])
 TEMPERLEY_MAJOR = np.array([5.0, 2.0, 3.5, 2.0, 4.5, 4.0, 2.0, 4.5, 2.0, 3.5, 1.5, 4.0])
 TEMPERLEY_MINOR = np.array([5.0, 2.0, 3.5, 4.5, 2.0, 4.0, 2.0, 4.5, 3.5, 2.0, 1.5, 4.0])
 
@@ -95,9 +91,7 @@ def _build_template_matrix() -> tuple[np.ndarray, list[tuple[str, str]]]:
     names: list[tuple[str, str]] = []
     for mode_index, mode in enumerate(MODES):
         for tonic in range(12):
-            stacked = [
-                _zscore(np.roll(profiles[mode_index], tonic)) for profiles in PROFILE_SETS
-            ]
+            stacked = [_zscore(np.roll(profiles[mode_index], tonic)) for profiles in PROFILE_SETS]
             rows.append(np.mean(stacked, axis=0))
             names.append((PITCH_CLASSES[tonic], mode))
     return np.stack(rows, axis=0), names
@@ -189,8 +183,7 @@ MODE_SCALES: dict[str, tuple[frozenset[int], ...]] = {
 #: augmented triad is a chromatic colour wherever it turns up, and counting it as
 #: in-key would hand key evidence to the one chord that says least about the key.
 _TERTIAN_QUALITIES = {
-    quality: CHORD_QUALITIES[quality]
-    for quality in ("maj", "min", "dim", "maj7", "min7", "7")
+    quality: CHORD_QUALITIES[quality] for quality in ("maj", "min", "dim", "maj7", "min7", "7")
 }
 
 #: The rest — suspensions and the added sixth.  These are not tertian stacks, so
@@ -228,9 +221,7 @@ def _added_chords(scale: frozenset[int]) -> set[tuple[int, str]]:
 
 # Derived once at import: the answer depends only on the vocabulary.
 _DIATONIC_DEGREES = {
-    mode: frozenset().union(
-        *(_tertian_chords(scale) | _added_chords(scale) for scale in scales)
-    )
+    mode: frozenset().union(*(_tertian_chords(scale) | _added_chords(scale) for scale in scales))
     for mode, scales in MODE_SCALES.items()
 }
 
@@ -276,9 +267,7 @@ def _evidence_support(chords: list[ChordSegment]) -> float:
     return min(1.0, len(distinct) / CHORD_EVIDENCE_FULL_SUPPORT)
 
 
-def chord_evidence_scores(
-    chords: list[ChordSegment], use_edges: bool = True
-) -> np.ndarray:
+def chord_evidence_scores(chords: list[ChordSegment], use_edges: bool = True) -> np.ndarray:
     """Score all 24 keys by how well a detected chord sequence fits them.
 
     Ordered like :data:`_TEMPLATE_NAMES` so it can be added to the profile
