@@ -156,9 +156,7 @@ def render_scale(
     root_midi = 12 * (octave + 1) + note_name_to_pc(tonic)
     degrees = [*steps, 12, *reversed(steps)]
 
-    audio = np.concatenate(
-        [render_note(root_midi + step, note_duration, sr) for step in degrees]
-    )
+    audio = np.concatenate([render_note(root_midi + step, note_duration, sr) for step in degrees])
     peak = np.max(np.abs(audio))
     if peak > 0:
         audio = audio / peak * 0.9

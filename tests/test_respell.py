@@ -103,13 +103,12 @@ def test_respelled_qualities_are_never_decoder_states():
 
 def test_respelled_pitch_class_sets_really_do_collide():
     """The premise of the whole module, asserted rather than assumed."""
+
     def notes(root: int, intervals: tuple[int, ...]) -> frozenset[int]:
         return frozenset((root + i) % 12 for i in intervals)
 
     for root in range(12):
-        assert notes(root, RESPELLED_QUALITIES["maj6"]) == notes(
-            root + 9, CHORD_QUALITIES["min7"]
-        )
+        assert notes(root, RESPELLED_QUALITIES["maj6"]) == notes(root + 9, CHORD_QUALITIES["min7"])
 
 
 # --- end to end -------------------------------------------------------------
@@ -122,9 +121,7 @@ def test_a_rendered_min7_over_its_third_becomes_a_major_sixth(root, expected):
         [fx.render_chord(root, "min7", 1.5, bass_interval=3, bass_amplitude=0.5)] * 3
     ).astype(np.float32)
     features = extract_features(audio, fx.SR)
-    segments = respell_with_bass(
-        detect_inversions(TemplateHMMEngine().analyze(features), features)
-    )
+    segments = respell_with_bass(detect_inversions(TemplateHMMEngine().analyze(features), features))
 
     longest = max((s for s in segments if not s.is_no_chord), key=lambda s: s.duration)
     assert longest.label == expected
@@ -144,9 +141,7 @@ def test_a_dominant_bass_re_roots_the_decode_before_respelling_can_apply():
         [fx.render_chord("A", "min7", 1.5, bass_interval=3, bass_amplitude=1.0)] * 3
     ).astype(np.float32)
     features = extract_features(audio, fx.SR)
-    segments = respell_with_bass(
-        detect_inversions(TemplateHMMEngine().analyze(features), features)
-    )
+    segments = respell_with_bass(detect_inversions(TemplateHMMEngine().analyze(features), features))
 
     longest = max((s for s in segments if not s.is_no_chord), key=lambda s: s.duration)
     assert longest.label == "C:maj"

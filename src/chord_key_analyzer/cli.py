@@ -133,9 +133,7 @@ def analyze(
         if lab_path:
             write_lab(result, lab_path)
     except OSError as exc:
-        status_console.print(
-            Text.assemble(("Error: ", "red"), f"cannot write output: {exc}")
-        )
+        status_console.print(Text.assemble(("Error: ", "red"), f"cannot write output: {exc}"))
         raise SystemExit(2) from exc
 
     if not quiet:
@@ -223,9 +221,7 @@ def eval_cmd(
         if csv_path:
             write_report_csv(tracks, summary, csv_path)
     except OSError as exc:
-        status_console.print(
-            Text.assemble(("Error: ", "red"), f"cannot write output: {exc}")
-        )
+        status_console.print(Text.assemble(("Error: ", "red"), f"cannot write output: {exc}"))
         raise SystemExit(2) from exc
 
     if not quiet:

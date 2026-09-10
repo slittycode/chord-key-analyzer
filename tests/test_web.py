@@ -38,7 +38,7 @@ def test_static_page_is_self_contained():
     """No CDN, no build step — the page must not reach out to the network."""
     html = (STATIC_DIR / "index.html").read_text()
     assert "<script" in html
-    assert "src=\"http" not in html
+    assert 'src="http' not in html
     assert "cdn." not in html
 
 
@@ -88,9 +88,7 @@ def test_unimplemented_engine_reports_a_job_error(client, pop_wav):
 def test_analyze_an_uploaded_file(client, pop_wav):
     """The endpoint runs the same pipeline as the CLI, so it must agree with it."""
     with open(pop_wav, "rb") as handle:
-        response = client.post(
-            "/analyze", files={"file": ("pop.wav", handle, "audio/wav")}
-        )
+        response = client.post("/analyze", files={"file": ("pop.wav", handle, "audio/wav")})
     assert response.status_code == 202
     job_id = response.json()["job"]
 

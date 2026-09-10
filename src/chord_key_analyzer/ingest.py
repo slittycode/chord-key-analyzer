@@ -108,9 +108,7 @@ def _decode_with_soundfile(
     return np.ascontiguousarray(samples, dtype=np.float32)
 
 
-def _decode_with_ffmpeg(
-    path: Path, sr: int, offset: float, duration: float | None
-) -> np.ndarray:
+def _decode_with_ffmpeg(path: Path, sr: int, offset: float, duration: float | None) -> np.ndarray:
     ffmpeg = _require_ffmpeg(f"to decode {path.name}")
     cmd = [ffmpeg, "-nostdin", "-loglevel", "error"]
     if offset > 0:

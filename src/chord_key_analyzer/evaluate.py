@@ -379,9 +379,7 @@ def summarise(tracks: list[TrackEvaluation]) -> dict[str, Any]:
         if not values or weight <= 0:
             summary[metric] = None
             continue
-        summary[metric] = round(
-            sum(score * duration for score, duration in values) / weight, 4
-        )
+        summary[metric] = round(sum(score * duration for score, duration in values) / weight, 4)
 
     key_scores = [t.key_score for t in scored if t.key_score is not None]
     summary["key"] = round(sum(key_scores) / len(key_scores), 4) if key_scores else None

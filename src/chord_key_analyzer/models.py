@@ -227,9 +227,7 @@ class ChordSegment:
         }
 
 
-def clip_segments(
-    segments: list[ChordSegment], start: float, end: float
-) -> list[ChordSegment]:
+def clip_segments(segments: list[ChordSegment], start: float, end: float) -> list[ChordSegment]:
     """The parts of ``segments`` sounding inside ``[start, end)``, trimmed to it.
 
     Times stay absolute; only the extents move.  Anything that scores a span of

@@ -264,8 +264,7 @@ def detect_sections(
     starts = _boundaries(novelty_curve(blocks), min_blocks)
 
     spans = [
-        (start, end)
-        for start, end in zip(starts, [*starts[1:], blocks.shape[1]], strict=True)
+        (start, end) for start, end in zip(starts, [*starts[1:], blocks.shape[1]], strict=True)
     ]
     labels = _label_spans(spans, blocks)
 
@@ -284,9 +283,7 @@ def detect_sections(
                 tonic=tonic,
                 mode=mode,
                 key_confidence=confidence,
-                progression=summarise_progression(
-                    clip_segments(chords, start, end), global_key
-                ),
+                progression=summarise_progression(clip_segments(chords, start, end), global_key),
             )
         )
     return sections
